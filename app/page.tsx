@@ -283,7 +283,7 @@ export default function ProvenancePage() {
 
               {selectedEntry && (
                 <div className="card border-highlight animate-fade-in">
-                  <div style={{ display: "flex", justifyContent: "between", alignItems: "center", borderBottom: "1px solid #e0dbd1", paddingBottom: "8px", marginBottom: "12px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e0dbd1", paddingBottom: "8px", marginBottom: "12px" }}>
                     <div className="card-h" style={{ margin: 0 }}>Block Metadata Record</div>
                     <button className="btn btn-secondary btn-sm" onClick={() => setSelectedEntry(null)}>Dismiss</button>
                   </div>
@@ -465,7 +465,7 @@ export default function ProvenancePage() {
                     <div style={{ borderBottom: "1px solid #2a2218", height: "32px", fontStyle: "italic", fontSize: "13px", fontFamily: "serif", color: "#222" }}>
                       {entries[0]?.parties?.issuer ? "Shane Jonathan Lozenich" : ""}
                     </div>
-                    <div style={{ fontSize: "9px", textTransform: "uppercase", tracking: "0.1em", color: "#666", marginTop: "4px" }}>
+                    <div style={{ fontSize: "9px", textTransform: "uppercase", letterSpacing: "0.1em", color: "#666", marginTop: "4px" }}>
                       Archivist-In-Chief Signature
                     </div>
                   </div>
@@ -489,7 +489,7 @@ const CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background-color: #fcfbfa; color: #2a2218; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
 
-  .app { min-height: 100vh; display: flex; flexDirection: column; background: #faf8f5; }
+  .app { min-height: 100vh; display: flex; flex-direction: column; background: #faf8f5; }
   
   .hdr { background: #2a2218; color: #f7f4ee; padding: 18px 32px; display: flex; justify-content: space-between; align-items: center; border-bottom: 4px solid #ccaa77; }
   .hdr-left .logo { font-family: 'Cormorant Garamond', serif; font-size: 24px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #f7f4ee; }
