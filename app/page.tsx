@@ -654,33 +654,24 @@ export default function App() {
               <div style={{fontSize:12,color:"#7a6a55",lineHeight:1.8}}>
                 Replace your file-based routes with Upstash Redis:
               </div>
-              <pre style={{marginTop:10,fontSize:10,background:"#2a2218",border:"1px solid #3a3228",padding:14,color:"#c8bfaa",overflowX:"auto",whiteSpace:"pre",lineHeight:1.7,maxHeight:260,overflowY:"auto"}}>{
-`// app/api/ledger/route.ts
-// npm install @upstash/redis  ← run this first
-
-import { Redis } from '@upstash/redis'
-import { NextRequest, NextResponse } from 'next/server'
-
-const redis = Redis.fromEnv()
-const KEY   = 'fiducia:ledger'
-const TOKEN = process.env.FIDUCIA_SYS_TOKEN
-
-export async function GET() {
-  const entries = await redis.lrange(KEY, 0, -1)
-  return NextResponse.json(entries.reverse())
-}
-
-export async function POST(req: NextRequest) {
-  const tok = req.headers.get('x-fiducia-token')
-  if (tok !== TOKEN)
-    return NextResponse.json(
-      { error: 'Unauthorized' }, { status: 401 }
-    )
-  const body = await req.json()
-  await redis.lpush(KEY, JSON.stringify(body))
-  return NextResponse.json({ ok: true, id: body.id })
-}`
-              }</pre>
+              <div style={{marginTop:10,fontSize:10,background:"#2a2218",border:"1px solid #3a3228",padding:14,color:"#c8bfaa",overflowX:"auto",fontFamily:"'Courier New',monospace",lineHeight:1.7,maxHeight:260,overflowY:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
+                {"// app/api/ledger/route.ts\n// npm install @upstash/redis  <- run this first\n\n"}
+                {"import { Redis } from '@upstash/redis'\n"}
+                {"import { NextRequest, NextResponse } from 'next/server'\n\n"}
+                {"const redis = Redis.fromEnv()\n"}
+                {"const KEY   = 'fiducia:ledger'\n"}
+                {"const TOKEN = process.env.FIDUCIA_SYS_TOKEN\n\n"}
+                {"export async function GET() {\n"}
+                {"  const entries = await redis.lrange(KEY, 0, -1)\n"}
+                {"  return NextResponse.json(entries.reverse())\n}\n\n"}
+                {"export async function POST(req) {\n"}
+                {"  const tok = req.headers.get('x-fiducia-token')\n"}
+                {"  if (tok !== TOKEN)\n"}
+                {"    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })\n"}
+                {"  const body = await req.json()\n"}
+                {"  await redis.lpush(KEY, JSON.stringify(body))\n"}
+                {"  return NextResponse.json({ ok: true, id: body.id })\n}"}
+              </div>
             </div>
 
             <div className="card">
