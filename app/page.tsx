@@ -30,21 +30,21 @@ const STRATA = [
 ];
 
 const ACTION_TOKENS = {
-  "REGISTER_IDENTITY":       { label:"Register Identity",       stratum:"01-Inherent",       tier:8, level:8 },
-  "REGISTER_INSTRUMENT":     { label:"Register Instrument",     stratum:"02-Constitutional", tier:8, level:4 },
-  "MINT_FDC":                { label:"Mint FDC",                stratum:"07-Operational",    tier:8, level:4 },
-  "TRANSFER_FDC":            { label:"Transfer FDC",            stratum:"04-Administrative", tier:3, level:3 },
-  "REDEEM_FDC":              { label:"Redeem FDC",              stratum:"05-Certificatory",  tier:5, level:3 },
-  "REGISTER_DOC":            { label:"Register Document",       stratum:"06-Provenance",     tier:3, level:4 },
-  "ATTEST_DOC":              { label:"Attest Document",         stratum:"05-Certificatory",  tier:4, level:4 },
-  "FILE_QUIET_TITLE":        { label:"File Quiet Title",        stratum:"08-Procedural",     tier:3, level:4 },
-  "INITIATE_LEGAL":          { label:"Initiate Legal Proceeding",stratum:"08-Procedural",    tier:3, level:4 },
-  "REGISTER_AUTHORITY_MODEL":{ label:"Register Authority Model",stratum:"02-Constitutional", tier:8, level:4 },
+  "REGISTER_IDENTITY":       { label:"Register Identity",        stratum:"01-Inherent",       tier:8, level:8 },
+  "REGISTER_INSTRUMENT":     { label:"Register Instrument",      stratum:"02-Constitutional", tier:8, level:4 },
+  "MINT_FDC":                { label:"Mint FDC",                 stratum:"07-Hereditary",     tier:8, level:4 },
+  "TRANSFER_FDC":            { label:"Transfer FDC",             stratum:"04-Administrative", tier:3, level:3 },
+  "REDEEM_FDC":              { label:"Redeem FDC",               stratum:"05-Certificatory",  tier:5, level:3 },
+  "REGISTER_DOC":            { label:"Register Document",        stratum:"06-Provenance",     tier:3, level:4 },
+  "ATTEST_DOC":              { label:"Attest Document",          stratum:"05-Certificatory",  tier:4, level:4 },
+  "FILE_QUIET_TITLE":        { label:"File Quiet Title",         stratum:"08-Procedural",     tier:3, level:4 },
+  "INITIATE_LEGAL":          { label:"Initiate Legal Proceeding",stratum:"08-Procedural",     tier:3, level:4 },
+  "REGISTER_AUTHORITY_MODEL":{ label:"Register Authority Model", stratum:"02-Constitutional", tier:8, level:4 },
 };
 
 const INSTRUMENTS = ["currency","identity","credit","certificate","doc_provenance","legal_filing","legal_procedure","governance","monetary_instrument_definition","authority_framework"];
 
-const LOCAL_KEY = "fc_ledger_v3";
+const LOCAL_KEY = "fc_ledger_v4";
 function loadLocal() { try { const d=localStorage.getItem(LOCAL_KEY); return d?JSON.parse(d):[]; } catch{return[];} }
 function saveLocal(e) { try{localStorage.setItem(LOCAL_KEY,JSON.stringify(e));}catch{} }
 
@@ -56,120 +56,80 @@ const DEMO = [
 ];
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;1,8..60,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:#f0ece4;color:#2a2218;font-family:'EB Garamond',Georgia,serif;}
 .app{min-height:100vh;}
-
-/* HEADER */
 .hdr{background:#f7f4ee;border-bottom:2px solid #2a2218;padding:16px 32px;display:flex;align-items:flex-start;justify-content:space-between;position:sticky;top:0;z-index:100;}
-.hdr-left{}
 .logo{font-family:'Cormorant Garamond',Georgia,serif;font-size:28px;font-weight:500;color:#2a2218;letter-spacing:0.12em;text-transform:uppercase;}
-.logo-sub{font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:#7a6a55;margin-top:2px;font-family:'EB Garamond',serif;}
+.logo-sub{font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:#7a6a55;margin-top:2px;}
 .hdr-right{text-align:right;}
 .hdr-entity{font-family:'Cormorant Garamond',serif;font-size:14px;font-weight:500;letter-spacing:0.08em;text-transform:uppercase;color:#2a2218;}
 .hdr-entity-sub{font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:#7a6a55;margin-top:2px;}
 .status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5a7a5a;margin-right:5px;vertical-align:middle;}
-
-/* NAV TABS */
-.tabs{display:flex;gap:0;border-bottom:2px solid #2a2218;margin:0 32px;}
+.nav{background:#f7f4ee;border-bottom:2px solid #2a2218;padding:0 32px;}
+.tabs{display:flex;gap:0;}
 .tab{padding:10px 20px;font-family:'EB Garamond',serif;font-size:13px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;border:none;background:transparent;color:#7a6a55;border-bottom:3px solid transparent;margin-bottom:-2px;transition:all 0.2s;}
 .tab.active{color:#2a2218;border-bottom:3px solid #2a2218;font-weight:500;}
 .tab:hover:not(.active){color:#2a2218;}
-
-/* CONTENT */
 .content{padding:28px 32px;max-width:1440px;margin:0 auto;}
 .page-header{margin-bottom:24px;padding-bottom:14px;border-bottom:1px solid #c8bfaa;}
-.page-header h2{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:400;font-style:italic;color:#2a2218;letter-spacing:0.02em;}
+.page-header h2{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:400;font-style:italic;color:#2a2218;}
 .page-header p{font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#7a6a55;margin-top:4px;}
-
-/* GRIDS */
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px;}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
-
-/* CARDS */
 .card{background:#f7f4ee;border:1px solid #c8bfaa;border-top:3px solid #2a2218;padding:18px 20px;}
-.card-h{font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#7a6a55;margin-bottom:14px;font-family:'EB Garamond',serif;}
-.card-rule{width:100%;height:1px;background:#c8bfaa;margin:14px 0;}
-
-/* METRICS */
+.card-h{font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#7a6a55;margin-bottom:14px;}
 .metric-val{font-family:'Cormorant Garamond',serif;font-size:34px;font-weight:500;color:#2a2218;line-height:1;}
 .metric-sub{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#7a6a55;margin-top:5px;}
-
-/* BADGES */
-.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;font-family:'EB Garamond',serif;border:1px solid;}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;border:1px solid;}
 .badge-green{background:#edf2ed;color:#3a5a3a;border-color:#a0b8a0;}
 .badge-purple{background:#f0ecf7;color:#5a4a7a;border-color:#b8aad0;}
 .badge-amber{background:#f7f0e2;color:#7a5a20;border-color:#c8a860;}
 .badge-red{background:#f7edec;color:#7a3a3a;border-color:#c8a0a0;}
 .badge-blue{background:#ecf0f7;color:#3a4a7a;border-color:#a0aed0;}
-
-/* STRATUM BARS */
 .strat-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;}
-.strat-label{font-size:11px;color:#5a4a35;width:140px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:0.04em;}
-.strat-bar-bg{flex:1;height:5px;background:#e0d8cc;border-radius:0;}
+.strat-label{font-size:11px;color:#5a4a35;width:140px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.strat-bar-bg{flex:1;height:5px;background:#e0d8cc;}
 .strat-bar{height:100%;transition:width 1s cubic-bezier(0.22,1,0.36,1);}
 .strat-pct{font-size:11px;color:#7a6a55;width:24px;text-align:right;}
-
-/* FEED */
 .feed-item{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #e0d8cc;}
 .feed-item:last-child{border-bottom:none;}
-.feed-action{font-size:13px;color:#2a2218;font-family:'EB Garamond',serif;}
+.feed-action{font-size:13px;color:#2a2218;}
 .feed-hash{font-size:10px;color:#9a8a75;margin-top:1px;letter-spacing:0.06em;}
-.feed-time{font-size:10px;color:#9a8a75;letter-spacing:0.06em;}
+.feed-time{font-size:10px;color:#9a8a75;}
 .feed-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
-
-/* SEPARATOR */
 .sep{width:100%;height:1px;background:#c8bfaa;margin:18px 0;}
-
-/* AUTHORITY CHIPS */
-.auth-chip{font-size:9px;padding:2px 6px;letter-spacing:0.08em;text-transform:uppercase;border:1px solid;font-family:'EB Garamond',serif;}
+.auth-chip{font-size:9px;padding:2px 6px;letter-spacing:0.08em;text-transform:uppercase;border:1px solid;}
 .chip-s{background:#f0ecf7;color:#5a4a7a;border-color:#b8aad0;}
 .chip-t{background:#edf2ed;color:#3a5a3a;border-color:#a0b8a0;}
 .chip-l{background:#f7f0e2;color:#7a5a20;border-color:#c8a860;}
 .authority-triple{display:flex;gap:5px;flex-wrap:wrap;}
-
-/* FORMS */
 .section-title{font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#7a6a55;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #c8bfaa;}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
 .form-row.single{grid-template-columns:1fr;}
 .form-row.three{grid-template-columns:1fr 1fr 1fr;}
 .fld{display:flex;flex-direction:column;gap:5px;}
 .fld label{font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#7a6a55;}
-.fld input,.fld select,.fld textarea{background:#f0ece4;border:1px solid #c8bfaa;border-radius:0;color:#2a2218;font-family:'EB Garamond',serif;font-size:14px;padding:8px 10px;outline:none;transition:border-color 0.2s;}
+.fld input,.fld select,.fld textarea{background:#f0ece4;border:1px solid #c8bfaa;color:#2a2218;font-family:'EB Garamond',serif;font-size:14px;padding:8px 10px;outline:none;transition:border-color 0.2s;}
 .fld input:focus,.fld select:focus,.fld textarea:focus{border-color:#2a2218;}
-.fld select option{background:#f7f4ee;}
-
-/* BUTTONS */
-.btn{padding:10px 22px;border:1px solid #2a2218;cursor:pointer;font-family:'EB Garamond',serif;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;transition:all 0.2s;border-radius:0;}
+.btn{padding:10px 22px;border:1px solid #2a2218;cursor:pointer;font-family:'EB Garamond',serif;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;transition:all 0.2s;}
 .btn-primary{background:#2a2218;color:#f7f4ee;}
 .btn-primary:hover{background:#3a3228;}
 .btn-primary:disabled{opacity:0.5;cursor:not-allowed;}
 .btn-secondary{background:transparent;color:#2a2218;border-color:#c8bfaa;}
 .btn-secondary:hover{background:#f0ece4;border-color:#2a2218;}
-.btn-green{background:#edf2ed;color:#3a5a3a;border-color:#a0b8a0;}
-.btn-green:hover{background:#deeade;}
 .btn-sm{padding:5px 12px;font-size:11px;}
-
-/* TABLE */
 .ledger-tbl{width:100%;border-collapse:collapse;font-size:13px;}
-.ledger-tbl th{text-align:left;font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:#7a6a55;padding:8px 12px;border-bottom:2px solid #2a2218;font-weight:400;font-family:'EB Garamond',serif;}
-.ledger-tbl td{padding:10px 12px;border-bottom:1px solid #e0d8cc;vertical-align:top;font-family:'EB Garamond',serif;font-size:13px;}
+.ledger-tbl th{text-align:left;font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:#7a6a55;padding:8px 12px;border-bottom:2px solid #2a2218;font-weight:400;}
+.ledger-tbl td{padding:10px 12px;border-bottom:1px solid #e0d8cc;vertical-align:top;font-size:13px;}
 .ledger-tbl tr:hover td{background:#f0ece4;}
-.ledger-tbl tr:last-child td{border-bottom:none;}
-
-/* ALERTS */
-.alert{padding:10px 14px;font-size:13px;margin-bottom:14px;display:flex;align-items:center;gap:8px;border:1px solid;font-family:'EB Garamond',serif;}
+.alert{padding:10px 14px;font-size:13px;margin-bottom:14px;display:flex;align-items:center;gap:8px;border:1px solid;}
 .alert-green{background:#edf2ed;border-color:#a0b8a0;color:#3a5a3a;}
 .alert-red{background:#f7edec;border-color:#c8a0a0;color:#7a3a3a;}
 .alert-blue{background:#ecf0f7;border-color:#a0aed0;color:#3a4a7a;}
-
-/* SPINNER */
 .spinner{width:14px;height:14px;border:2px solid rgba(42,34,24,0.2);border-top-color:#2a2218;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;}
 @keyframes spin{to{transform:rotate(360deg);}}
-
-/* CERTIFICATE */
 .cert-box{background:#f7f4ee;border:1px solid #c8bfaa;padding:32px;position:relative;overflow:hidden;}
 .cert-outer-border{position:absolute;inset:8px;border:1px solid #c8bfaa;pointer-events:none;}
 .cert-watermark{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-family:'Cormorant Garamond',serif;font-size:72px;color:rgba(42,34,24,0.04);pointer-events:none;white-space:nowrap;font-style:italic;}
@@ -177,32 +137,26 @@ body{background:#f0ece4;color:#2a2218;font-family:'EB Garamond',Georgia,serif;}
 .cert-subtitle{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#7a6a55;margin-bottom:22px;}
 .cert-rule{width:60px;height:2px;background:#2a2218;margin-bottom:22px;}
 .cert-body{font-size:14px;color:#5a4a35;line-height:1.8;margin-bottom:20px;font-style:italic;}
-.cert-field{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e0d8cc;font-size:12px;}
+.cert-field{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #e0d8cc;}
 .cert-label{font-size:9px;text-transform:uppercase;letter-spacing:0.18em;color:#7a6a55;}
 .cert-val{font-size:13px;color:#2a2218;text-align:right;max-width:60%;}
-.cert-hash{font-size:10px;color:#9a8a75;word-break:break-all;margin-top:18px;padding-top:14px;border-top:1px solid #c8bfaa;letter-spacing:0.04em;}
-
-/* GDRI */
+.cert-hash{font-size:10px;color:#9a8a75;word-break:break-all;margin-top:18px;padding-top:14px;border-top:1px solid #c8bfaa;}
 .gdri-bar{height:6px;background:#e0d8cc;margin:8px 0;}
 .gdri-fill{height:100%;background:#2a2218;transition:width 1s;}
-.int-score .big{font-family:'Cormorant Garamond',serif;font-size:44px;font-weight:500;color:#2a2218;line-height:1;}
-.int-score .unit{font-size:14px;color:#7a6a55;letter-spacing:0.1em;text-transform:uppercase;}
-
-/* JSON */
-.json-view{background:#2a2218;border:1px solid #3a3228;padding:14px;font-family:'Courier New',monospace;font-size:10px;line-height:1.7;overflow-x:auto;white-space:pre;color:#c8bfaa;max-height:280px;overflow-y:auto;}
-
-/* MISC */
+.code-block{background:#2a2218;border:1px solid #3a3228;padding:14px;font-family:'Courier New',monospace;font-size:10px;line-height:1.7;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:#c8bfaa;max-height:260px;overflow-y:auto;margin-top:10px;}
 .empty-state{text-align:center;padding:40px 20px;color:#9a8a75;font-size:13px;font-style:italic;}
 .filter-btn{padding:4px 12px;border:1px solid #c8bfaa;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;background:transparent;color:#7a6a55;cursor:pointer;font-family:'EB Garamond',serif;transition:all 0.15s;}
 .filter-btn.active{background:#2a2218;color:#f7f4ee;border-color:#2a2218;}
 .filter-row{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
-.mono{font-family:'Courier New',monospace;font-size:11px;}
 .detail-label{font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:#7a6a55;}
-.detail-val{font-size:13px;color:#2a2218;word-break:break-all;font-family:'EB Garamond',serif;}
+.detail-val{font-size:13px;color:#2a2218;word-break:break-all;}
 .entry-detail{background:#f0ece4;border:1px solid #c8bfaa;padding:16px;margin-top:6px;}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .detail-row{display:flex;flex-direction:column;gap:3px;}
+.checklist-item{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid #e0d8cc;align-items:center;font-size:13px;}
 `;
+
+const VERCEL_URL = "https://stratigraphic-authority-ledger.vercel.app";
 
 export default function App() {
   const [tab, setTab] = useState("overview");
@@ -215,6 +169,9 @@ export default function App() {
   const [filterStratum, setFilterStratum] = useState("all");
   const [fdc, setFdc] = useState(0);
   const [gdri, setGdri] = useState(1000000);
+  const [connectToken, setConnectToken] = useState("");
+  const [connectMsg, setConnectMsg] = useState(null);
+  const [connectOk, setConnectOk] = useState(false);
 
   useEffect(() => {
     const stored = loadLocal();
@@ -255,39 +212,23 @@ export default function App() {
 
   const filteredLedger = filterStratum==="all" ? ledger : ledger.filter(e=>e.authority?.stratum===filterStratum);
 
-  // ── OVERVIEW ──────────────────────────────────────────────────────────────
   function Overview() {
     const counts = STRATA.map(s=>({...s,count:ledger.filter(e=>e.authority?.stratum===s.code).length}));
     const total = ledger.length;
     const verifiedPct = total>0?Math.round((ledger.filter(e=>e.action?.token).length/total)*100):0;
     return (
       <div>
-        <div className="page-header">
-          <h2>Stratigraphic Provenance Engine</h2>
-          <p>Identity · Finance · Security · Chain of Authority</p>
-        </div>
-
+        <div className="page-header"><h2>Stratigraphic Provenance Engine</h2><p>Identity · Finance · Security · Chain of Authority</p></div>
         <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
           <span className="badge badge-green">● Ledger Active</span>
           <span className="badge badge-purple">● FDC-CONSTITUTION-V1</span>
           <span className="badge badge-blue">● AUTH-CONSTITUTION-V1</span>
         </div>
-
         <div className="grid4">
-          {[
-            {label:"Ledger Entries",val:total,sub:"immutable blocks"},
-            {label:"FDC Supply",val:fdc.toLocaleString(),sub:"fiducial credits"},
-            {label:"GDRI Balance",val:(gdri/1000000).toFixed(2)+"M",sub:"global debt reduction"},
-            {label:"Integrity",val:verifiedPct+"%",sub:"verified entries"},
-          ].map(m=>(
-            <div className="card" key={m.label}>
-              <div className="card-h">{m.label}</div>
-              <div className="metric-val">{m.val}</div>
-              <div className="metric-sub">{m.sub}</div>
-            </div>
+          {[{label:"Ledger Entries",val:total,sub:"immutable blocks"},{label:"FDC Supply",val:fdc.toLocaleString(),sub:"fiducial credits"},{label:"GDRI Balance",val:(gdri/1000000).toFixed(2)+"M",sub:"global debt reduction"},{label:"Integrity",val:verifiedPct+"%",sub:"verified entries"}].map(m=>(
+            <div className="card" key={m.label}><div className="card-h">{m.label}</div><div className="metric-val">{m.val}</div><div className="metric-sub">{m.sub}</div></div>
           ))}
         </div>
-
         <div className="grid2">
           <div className="card">
             <div className="card-h">Stratigraphic Authority Layers</div>
@@ -299,65 +240,38 @@ export default function App() {
               </div>
             ))}
           </div>
-
           <div className="card">
             <div className="card-h">Provenance Feed</div>
             {ledger.slice(0,8).map(e=>(
               <div className="feed-item" key={e.id}>
-                <div>
-                  <div className="feed-action">{ACTION_TOKENS[e.action?.token]?.label||e.action?.token}</div>
-                  <div className="feed-hash mono">{truncHash(e.legal?.doc_hash)}</div>
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <div className="feed-time">{timeSince(e.timestamp)}</div>
-                  <div className="feed-dot" style={{background:STRATA.find(s=>s.code===e.authority?.stratum)?.color||"#9a8a75"}}/>
-                </div>
+                <div><div className="feed-action">{ACTION_TOKENS[e.action?.token]?.label||e.action?.token}</div><div className="feed-hash">{truncHash(e.legal?.doc_hash)}</div></div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}><div className="feed-time">{timeSince(e.timestamp)}</div><div className="feed-dot" style={{background:STRATA.find(s=>s.code===e.authority?.stratum)?.color||"#9a8a75"}}/></div>
               </div>
             ))}
-            {!ledger.length&&<div className="empty-state">No entries yet. Register your first block.</div>}
+            {!ledger.length&&<div className="empty-state">No entries yet.</div>}
           </div>
         </div>
-
         <div className="grid2">
           <div className="card">
             <div className="card-h">Authority Models</div>
-            {[
-              {name:"Model A — Identity & Institutional",axis:"Stratum 01–08",icon:"◆",color:"#5a4a7a",desc:"Biological identity, constitutional authority, legal procedures"},
-              {name:"Model B — Financial & Monetary",axis:"Tier 1–8",icon:"◈",color:"#3a5a3a",desc:"FDC issuance, monetary governance, GDRI-backed currency"},
-              {name:"Model C — Security & Risk",axis:"Level 1–8",icon:"◉",color:"#7a5a20",desc:"Risk classification, heir protection, access control"},
-            ].map(m=>(
+            {[{name:"Model A — Identity & Institutional",axis:"Stratum 01–08",icon:"◆",color:"#5a4a7a",desc:"Biological identity, constitutional authority, legal procedures"},{name:"Model B — Financial & Monetary",axis:"Tier 1–8",icon:"◈",color:"#3a5a3a",desc:"FDC issuance, monetary governance, GDRI-backed currency"},{name:"Model C — Security & Risk",axis:"Level 1–8",icon:"◉",color:"#7a5a20",desc:"Risk classification, heir protection, access control"}].map(m=>(
               <div key={m.name} style={{display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid #e0d8cc"}}>
                 <div style={{fontSize:18,color:m.color,flexShrink:0,paddingTop:2}}>{m.icon}</div>
-                <div>
-                  <div style={{fontSize:14,color:"#2a2218",fontFamily:"'EB Garamond',serif",marginBottom:2}}>{m.name}</div>
-                  <div style={{fontSize:11,color:"#7a6a55",marginBottom:5,letterSpacing:"0.04em"}}>{m.desc}</div>
-                  <span className="badge badge-purple" style={{fontSize:9}}>{m.axis}</span>
-                </div>
+                <div><div style={{fontSize:14,color:"#2a2218",marginBottom:2}}>{m.name}</div><div style={{fontSize:11,color:"#7a6a55",marginBottom:5}}>{m.desc}</div><span className="badge badge-purple" style={{fontSize:9}}>{m.axis}</span></div>
               </div>
             ))}
           </div>
-
           <div className="card">
             <div className="card-h">GDRI — Global Debt Reduction Index</div>
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:10,color:"#7a6a55",marginBottom:4,letterSpacing:"0.12em",textTransform:"uppercase"}}>Current Balance</div>
-              <div className="int-score"><span className="big">{(gdri/1000000).toFixed(2)}M</span> <span className="unit">units</span></div>
-            </div>
+            <div style={{marginBottom:12}}><div style={{fontSize:10,color:"#7a6a55",marginBottom:4,letterSpacing:"0.12em",textTransform:"uppercase"}}>Current Balance</div><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:44,color:"#2a2218",lineHeight:1}}>{(gdri/1000000).toFixed(2)}M <span style={{fontSize:14,color:"#7a6a55"}}>units</span></div></div>
             <div className="gdri-bar"><div className="gdri-fill" style={{width:Math.max(5,Math.min(100,(gdri/1000000)*100))+"%"}}/></div>
-            <div style={{fontSize:12,color:"#7a6a55",marginTop:8,fontStyle:"italic"}}>Each FDC minted reduces this index by 1 unit. The currency exists to reduce global debt over time.</div>
-            <div className="sep"/>
-            <div className="card-h" style={{marginBottom:8}}>FDC Supply Events</div>
-            {["MINT_FDC","TRANSFER_FDC","REDEEM_FDC"].map(tok=>{
-              const c=ledger.filter(e=>e.action?.token===tok).length;
-              return <div key={tok} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"4px 0",borderBottom:"1px solid #e0d8cc"}}><span style={{color:"#7a6a55",letterSpacing:"0.06em"}}>{tok}</span><span style={{color:"#2a2218"}}>{c}</span></div>;
-            })}
+            <div style={{fontSize:12,color:"#7a6a55",marginTop:8,fontStyle:"italic"}}>Each FDC minted reduces this index by 1 unit.</div>
           </div>
         </div>
       </div>
     );
   }
 
-  // ── LEDGER ────────────────────────────────────────────────────────────────
   function Ledger() {
     return (
       <div>
@@ -372,32 +286,31 @@ export default function App() {
             <button className="btn btn-secondary btn-sm" onClick={()=>{const b=new Blob([JSON.stringify(ledger,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="fiducia_ledger.json";a.click();}}>Export JSON</button>
           </div>
         </div>
-        {mintStatus&&<div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`}>{loading&&<div className="spinner"/>}{mintStatus.msg}</div>}
+        {mintStatus&&<div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`}>{mintStatus.msg}</div>}
         <div style={{background:"#f7f4ee",border:"1px solid #c8bfaa"}}>
           <table className="ledger-tbl">
             <thead><tr><th>Entry ID</th><th>Timestamp</th><th>Action</th><th>Asset / Subject</th><th>Authority</th><th>Hash</th><th></th></tr></thead>
             <tbody>
-              {!filteredLedger.length&&<tr><td colSpan={7} style={{textAlign:"center",padding:32,color:"#9a8a75",fontStyle:"italic",fontSize:13}}>No entries match this filter.</td></tr>}
+              {!filteredLedger.length&&<tr><td colSpan={7} style={{textAlign:"center",padding:32,color:"#9a8a75",fontStyle:"italic"}}>No entries match this filter.</td></tr>}
               {filteredLedger.map(e=>(
                 <>
                   <tr key={e.id} style={{cursor:"pointer"}} onClick={()=>setSelectedEntry(selectedEntry?.id===e.id?null:e)}>
-                    <td><span className="mono" style={{fontSize:10,color:"#5a4a7a"}}>{e.id.slice(0,22)}…</span></td>
+                    <td><span style={{fontFamily:"'Courier New',monospace",fontSize:10,color:"#5a4a7a"}}>{e.id.slice(0,22)}…</span></td>
                     <td style={{fontSize:11,color:"#7a6a55",whiteSpace:"nowrap"}}>{new Date(e.timestamp).toLocaleString()}</td>
                     <td><span className="badge badge-purple" style={{fontSize:9}}>{e.action?.token}</span></td>
                     <td style={{maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.asset?.label}>{e.asset?.label}</td>
                     <td>{renderAuthority(e.authority)}</td>
-                    <td><span className="mono" style={{fontSize:9,color:"#9a8a75"}}>{truncHash(e.legal?.doc_hash)}</span></td>
+                    <td><span style={{fontFamily:"'Courier New',monospace",fontSize:9,color:"#9a8a75"}}>{truncHash(e.legal?.doc_hash)}</span></td>
                     <td><div style={{display:"flex",gap:6}}><button className="btn btn-secondary btn-sm" onClick={ev=>{ev.stopPropagation();setCertEntry(e);setTab("certificates");}}>Cert</button>{e._local&&<span className="badge badge-amber" style={{fontSize:8}}>local</span>}</div></td>
                   </tr>
                   {selectedEntry?.id===e.id&&(
                     <tr key={e.id+"-d"}><td colSpan={7} style={{padding:"0 12px 16px"}}>
                       <div className="entry-detail">
                         <div className="detail-grid">
-                          {[["Issuer",e.parties?.issuer],["To / Recipient",e.parties?.to||"—"],["Stratum",e.action?.stratum],["Instrument",e.instrument?.type+(e.instrument?.unit?" · "+e.instrument.unit:"")],["Amount",e.instrument?.amount?.toLocaleString()||"—"],["Jurisdiction",e.legal?.jurisdiction],["GDR Delta",e.policy?.gdr_index_delta?.toLocaleString()||"—"],["Tags",(e.metadata?.tags||[]).join(", ")||"—"],["Notes",e.metadata?.notes||"—"],["Reason",e.action?.reason]].map(([k,v])=>(
+                          {[["Issuer",e.parties?.issuer],["To",e.parties?.to||"—"],["Stratum",e.action?.stratum],["Instrument",e.instrument?.type+(e.instrument?.unit?" · "+e.instrument.unit:"")],["Amount",e.instrument?.amount?.toLocaleString()||"—"],["Jurisdiction",e.legal?.jurisdiction],["Notes",e.metadata?.notes||"—"],["Reason",e.action?.reason]].map(([k,v])=>(
                             <div className="detail-row" key={k}><div className="detail-label">{k}</div><div className="detail-val">{v}</div></div>
                           ))}
                         </div>
-                        <div style={{marginTop:12}}><div className="detail-label" style={{marginBottom:6}}>Full JSON Record</div><div className="json-view">{JSON.stringify(e,null,2)}</div></div>
                       </div>
                     </td></tr>
                   )}
@@ -410,12 +323,11 @@ export default function App() {
     );
   }
 
-  // ── MINT ──────────────────────────────────────────────────────────────────
   function Mint() {
     return (
       <div>
         <div className="page-header"><h2>Register Entry</h2><p>Mint a new immutable block to the provenance ledger</p></div>
-        {mintStatus&&<div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`} style={{marginBottom:16}}>{loading&&<div className="spinner"/>}{mintStatus.msg}{mintStatus.id&&<span style={{marginLeft:8,fontSize:10,opacity:0.7}}>ID: {mintStatus.id}</span>}</div>}
+        {mintStatus&&<div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`} style={{marginBottom:16}}>{loading&&<div className="spinner"/>}{mintStatus.msg}</div>}
         <div className="grid2">
           <div className="card">
             <div className="section-title">Entry Details</div>
@@ -435,12 +347,12 @@ export default function App() {
               </div>
               {["MINT_FDC","TRANSFER_FDC","REDEEM_FDC"].includes(mintForm.action_token)&&(
                 <div className="form-row">
-                  <div className="fld"><label>Instrument Unit</label><input value={mintForm.instrument_unit} onChange={e=>handleMintChange("instrument_unit",e.target.value)} placeholder="FDC"/></div>
+                  <div className="fld"><label>Unit</label><input value={mintForm.instrument_unit} onChange={e=>handleMintChange("instrument_unit",e.target.value)} placeholder="FDC"/></div>
                   <div className="fld"><label>Amount</label><input type="number" value={mintForm.instrument_amount} onChange={e=>handleMintChange("instrument_amount",e.target.value)} placeholder="0"/></div>
                 </div>
               )}
               <div className="form-row single"><div className="fld"><label>Reason / Purpose</label><input value={mintForm.reason} onChange={e=>handleMintChange("reason",e.target.value)} placeholder="Why is this action being taken?"/></div></div>
-              <div className="form-row single"><div className="fld"><label>Notes</label><textarea value={mintForm.notes} onChange={e=>handleMintChange("notes",e.target.value)} rows={2} placeholder="Optional notes" style={{resize:"vertical"}}/></div></div>
+              <div className="form-row single"><div className="fld"><label>Notes</label><textarea value={mintForm.notes} onChange={e=>handleMintChange("notes",e.target.value)} rows={2} style={{resize:"vertical"}}/></div></div>
               <div className="form-row single"><div className="fld"><label>Tags (comma separated)</label><input value={mintForm.tags} onChange={e=>handleMintChange("tags",e.target.value)} placeholder="identity, legal, stratum01"/></div></div>
               <div className="sep"/>
               <div className="form-row three">
@@ -451,38 +363,20 @@ export default function App() {
               <button className="btn btn-primary" type="submit" disabled={loading} style={{width:"100%",marginTop:8}}>{loading?"Registering…":"Register Entry to Ledger"}</button>
             </form>
           </div>
-
-          <div>
-            <div className="card" style={{marginBottom:16}}>
-              <div className="section-title">Authority Reference</div>
-              {STRATA.map(s=>(
-                <div key={s.code} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid #e0d8cc",alignItems:"flex-start"}}>
-                  <div style={{width:34,height:20,border:`1px solid ${s.color}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:s.color,flexShrink:0,letterSpacing:"0.06em"}}>{s.short}</div>
-                  <div><div style={{fontSize:13,color:"#2a2218",fontFamily:"'EB Garamond',serif"}}>{s.name}</div><div style={{fontSize:11,color:"#7a6a55"}}>{s.desc}</div></div>
-                </div>
-              ))}
-            </div>
-            <div className="card">
-              <div className="section-title">Quick Register</div>
-              {[
-                {label:"Register Identity Document",token:"REGISTER_IDENTITY",desc:"Anchor a DNA, lineage, or identity record"},
-                {label:"Mint FDC Currency",token:"MINT_FDC",desc:"Issue Fiducial Credits (reduces GDRI)"},
-                {label:"Register Legal Document",token:"REGISTER_DOC",desc:"Add a court filing or legal document"},
-                {label:"Issue Certificate",token:"ATTEST_DOC",desc:"Create a provenance attestation"},
-              ].map(qa=>(
-                <button key={qa.token} className="btn btn-secondary" style={{width:"100%",textAlign:"left",marginBottom:8,display:"block",padding:"10px 14px"}} onClick={()=>{handleMintChange("action_token",qa.token);setTab("mint");}}>
-                  <div style={{fontSize:13,color:"#2a2218",marginBottom:2,fontFamily:"'EB Garamond',serif"}}>{qa.label}</div>
-                  <div style={{fontSize:11,color:"#7a6a55",textTransform:"none",letterSpacing:0}}>{qa.desc}</div>
-                </button>
-              ))}
-            </div>
+          <div className="card">
+            <div className="section-title">Authority Reference</div>
+            {STRATA.map(s=>(
+              <div key={s.code} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid #e0d8cc",alignItems:"flex-start"}}>
+                <div style={{width:34,height:20,border:`1px solid ${s.color}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:s.color,flexShrink:0}}>{s.short}</div>
+                <div><div style={{fontSize:13,color:"#2a2218"}}>{s.name}</div><div style={{fontSize:11,color:"#7a6a55"}}>{s.desc}</div></div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
     );
   }
 
-  // ── CERTIFICATES ──────────────────────────────────────────────────────────
   function Certificates() {
     const entry=certEntry||ledger[0];
     if(!entry) return <div className="empty-state">No entries to certify.</div>;
@@ -495,14 +389,13 @@ export default function App() {
             <div className="section-title">Select Entry to Certify</div>
             <div style={{maxHeight:300,overflowY:"auto"}}>
               {ledger.map(e=>(
-                <div key={e.id} onClick={()=>setCertEntry(e)} style={{padding:"9px 10px",cursor:"pointer",background:certEntry?.id===e.id?"#e8e2d8":"transparent",marginBottom:3,borderLeft:certEntry?.id===e.id?"3px solid #2a2218":"3px solid transparent",transition:"all 0.15s"}}>
-                  <div style={{fontSize:13,color:"#2a2218",fontFamily:"'EB Garamond',serif",marginBottom:2}}>{e.asset?.label||e.id}</div>
-                  <div style={{fontSize:10,color:"#9a8a75",letterSpacing:"0.06em"}}>{e.action?.token} · {timeSince(e.timestamp)}</div>
+                <div key={e.id} onClick={()=>setCertEntry(e)} style={{padding:"9px 10px",cursor:"pointer",background:certEntry?.id===e.id?"#e8e2d8":"transparent",borderLeft:certEntry?.id===e.id?"3px solid #2a2218":"3px solid transparent",transition:"all 0.15s",marginBottom:3}}>
+                  <div style={{fontSize:13,color:"#2a2218",marginBottom:2}}>{e.asset?.label||e.id}</div>
+                  <div style={{fontSize:10,color:"#9a8a75"}}>{e.action?.token} · {timeSince(e.timestamp)}</div>
                 </div>
               ))}
             </div>
           </div>
-
           <div className="cert-box">
             <div className="cert-outer-border"/>
             <div className="cert-watermark">Fiducia Centrale</div>
@@ -510,19 +403,14 @@ export default function App() {
             <div className="cert-rule"/>
             <div className="cert-title">{entry.asset?.label||"Untitled Entry"}</div>
             <div className="cert-subtitle">Certificate of Stratigraphic Provenance</div>
-            <div className="cert-body">
-              This certificate attests, under the Certificatory authority of Fiducia Centrale (Stratum 05), that the entry identified herein has been recorded in the immutable provenance ledger and is cryptographically sealed. The integrity of this record cannot be altered without detection.
-            </div>
+            <div className="cert-body">This certificate attests, under the Certificatory authority of Fiducia Centrale (Stratum 05), that the entry identified herein has been recorded in the immutable provenance ledger and is cryptographically sealed.</div>
             {[["Entry ID",entry.id],["Action",entry.action?.token],["Stratum",entry.authority?.stratum],["Financial Tier","Tier "+entry.authority?.tier],["Security Level","Level "+entry.authority?.level],["Issuing Authority",entry.parties?.issuer],["Jurisdiction",entry.legal?.jurisdiction],["Date Issued",new Date(entry.timestamp).toLocaleString()],["Source Hash",truncHash(entry.legal?.doc_hash)]].map(([k,v])=>(
-              <div className="cert-field" key={k}>
-                <span className="cert-label">{k}</span>
-                <span className="cert-val">{v||"—"}</span>
-              </div>
+              <div className="cert-field" key={k}><span className="cert-label">{k}</span><span className="cert-val">{v||"—"}</span></div>
             ))}
             <div className="cert-hash"><div style={{fontSize:9,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:4}}>Certificate Hash</div><div style={{color:"#5a4a7a"}}>{certHash}</div></div>
             <div style={{marginTop:18,display:"flex",gap:8}}>
-              <button className="btn btn-primary btn-sm" onClick={()=>{const t=`FIDUCIA CENTRALE — CERTIFICATE OF PROVENANCE\n\nEntry: ${entry.asset?.label}\nID: ${entry.id}\nAction: ${entry.action?.token}\nStratum: ${entry.authority?.stratum}\nIssuer: ${entry.parties?.issuer}\nDate: ${new Date(entry.timestamp).toLocaleString()}\nCert Hash: ${certHash}`;navigator.clipboard?.writeText(t).catch(()=>{});}}>Copy Certificate</button>
-              <button className="btn btn-secondary btn-sm">Print</button>
+              <button className="btn btn-primary btn-sm" onClick={()=>{const t=`FIDUCIA CENTRALE — CERTIFICATE OF PROVENANCE\n\nEntry: ${entry.asset?.label}\nID: ${entry.id}\nCert Hash: ${certHash}`;navigator.clipboard?.writeText(t).catch(()=>{});}}>Copy Certificate</button>
+              <button className="btn btn-secondary btn-sm" onClick={()=>window.print()}>Print</button>
             </div>
           </div>
         </div>
@@ -530,88 +418,77 @@ export default function App() {
     );
   }
 
-  // ── CONNECT ───────────────────────────────────────────────────────────────
   function Connect() {
-    const [testMsg, setTestMsg] = useState(null);
-    const [testOk, setTestOk] = useState(false);
-    const [tokenVal, setTokenVal] = useState("");
-
     async function handleTest() {
-      setTestMsg("Testing connection…");
+      setConnectMsg("Testing…"); setConnectOk(false);
       try {
-        const r = await fetch("https://stratigraphic-authority-ledger.vercel.app/api/ledger", {
-          headers: tokenVal ? { "X-Fiducia-Token": tokenVal } : {},
+        const r = await fetch(VERCEL_URL + "/api/ledger", {
+          headers: connectToken ? { "X-Fiducia-Token": connectToken } : {},
           signal: AbortSignal.timeout(6000),
         });
         if (r.ok) {
           const data = await r.json();
-          setTestOk(true);
-          setTestMsg(`Connected. ${Array.isArray(data) ? data.length : "?"} entries found on remote ledger.`);
+          setConnectOk(true);
+          setConnectMsg("Connected. " + (Array.isArray(data) ? data.length : "?") + " entries on remote ledger.");
         } else {
-          setTestOk(false);
-          setTestMsg(`API responded with status ${r.status}. Check your token or deployment.`);
+          setConnectMsg("API returned status " + r.status + ". Check your token or deployment.");
         }
-      } catch (err) {
-        setTestOk(false);
-        setTestMsg("Could not reach API. Verify your Vercel deployment is live.");
+      } catch {
+        setConnectMsg("Could not reach API. Check that your Vercel deployment is live.");
       }
     }
 
     async function handlePull() {
-      setTestMsg("Pulling from remote…");
+      setConnectMsg("Pulling…"); setConnectOk(false);
       try {
-        const r = await fetch("https://stratigraphic-authority-ledger.vercel.app/api/ledger", {
-          signal: AbortSignal.timeout(6000),
-        });
+        const r = await fetch(VERCEL_URL + "/api/ledger", { signal: AbortSignal.timeout(6000) });
         if (!r.ok) throw new Error("Status " + r.status);
         const data = await r.json();
         if (Array.isArray(data) && data.length > 0) {
           const merged = [...data, ...ledger.filter(e => e._local)];
           setLedger(merged); saveLocal(merged);
-          setTestOk(true);
-          setTestMsg(`Pulled ${data.length} entries from Vercel and merged with local data.`);
+          setConnectOk(true);
+          setConnectMsg("Pulled " + data.length + " entries from Vercel and merged with local data.");
         } else {
-          setTestOk(false);
-          setTestMsg("Remote ledger is empty. Your local entries are intact.");
+          setConnectMsg("Remote ledger is empty. Local entries intact.");
         }
-      } catch (err) {
-        setTestOk(false);
-        setTestMsg("Pull failed: " + err.message);
+      } catch(err) {
+        setConnectMsg("Pull failed: " + err.message);
       }
     }
 
+    const steps = [
+      {done:true,  label:"Vercel project created"},
+      {done:true,  label:"Upstash Redis connected in Vercel dashboard"},
+      {done:true,  label:"FIDUCIA_SYS_TOKEN set in Vercel environment variables"},
+      {done:false, label:"Copy app/api/ledger/route.ts from the code artifact"},
+      {done:false, label:"Copy app/api/mint/route.ts from the code artifact"},
+      {done:false, label:"app/page.tsx replaced with dashboard code"},
+      {done:false, label:"'use client' added to top of page.tsx"},
+      {done:false, label:"Google Fonts link moved to app/layout.tsx"},
+      {done:false, label:"git push — Vercel auto-deploys"},
+      {done:false, label:"Test Connection below returns green"},
+    ];
+
     return (
       <div>
-        <div className="page-header">
-          <h2>Backend Connection</h2>
-          <p>Connect your Vercel deployment · Upstash Redis · FastAPI</p>
-        </div>
-
+        <div className="page-header"><h2>Backend Connection</h2><p>Vercel · Upstash Redis · Deployment Checklist</p></div>
         <div className="grid2">
           <div className="card">
-            <div className="section-title">Vercel API Connection</div>
-
+            <div className="section-title">Test Your Live API</div>
             <div className="fld" style={{marginBottom:12}}>
-              <label>API Base URL</label>
-              <input defaultValue="https://stratigraphic-authority-ledger.vercel.app" readOnly style={{opacity:0.7}}/>
+              <label>Vercel API URL</label>
+              <input value={VERCEL_URL + "/api/ledger"} readOnly style={{opacity:0.7,fontFamily:"'Courier New',monospace",fontSize:12}}/>
             </div>
-
             <div className="fld" style={{marginBottom:14}}>
               <label>FIDUCIA_SYS_TOKEN</label>
-              <input
-                type="password"
-                placeholder="Paste your token here — not stored"
-                value={tokenVal}
-                onChange={e=>setTokenVal(e.target.value)}
-              />
+              <input type="password" placeholder="Paste your token here" value={connectToken} onChange={e=>setConnectToken(e.target.value)}/>
             </div>
-
-            {testMsg && (
-              <div className={`alert ${testOk?"alert-green":"alert-red"}`} style={{marginBottom:12}}>
-                {testMsg}
+            {connectMsg && (
+              <div className={`alert ${connectOk?"alert-green":"alert-red"}`} style={{marginBottom:12}}>
+                {connectMsg}
               </div>
             )}
-
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button className="btn btn-primary btn-sm" onClick={handleTest}>Test Connection</button>
               <button className="btn btn-secondary btn-sm" onClick={handlePull}>⟳ Pull from Vercel</button>
@@ -620,79 +497,37 @@ export default function App() {
                 const a=document.createElement("a");a.href=URL.createObjectURL(b);
                 a.download="fiducia_ledger_export.json";a.click();
               }}>Export JSON</button>
-              <button className="btn btn-secondary btn-sm" onClick={()=>{
-                if(window.confirm("Clear all local entries? Remote data is unaffected.")){
-                  setLedger([]);saveLocal([]);
-                }
-              }}>Clear Local</button>
             </div>
-
             <div className="sep"/>
-            <div className="section-title">Next.js API Routes Required</div>
-            {[
-              {m:"GET", p:"/api/ledger", d:"Returns full ledger array from Upstash Redis"},
-              {m:"POST",p:"/api/ledger", d:"Writes a new entry (requires X-Fiducia-Token header)"},
-              {m:"POST",p:"/api/mint",   d:"Alias for ledger POST — mints a new block"},
-              {m:"GET", p:"/api/strata", d:"Returns authority strata definitions"},
-            ].map(r=>(
-              <div key={r.p+r.m} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid #e0d8cc",fontSize:12}}>
-                <span className={`badge ${r.m==="GET"?"badge-green":"badge-purple"}`} style={{fontSize:9,flexShrink:0}}>{r.m}</span>
-                <div>
-                  <div style={{color:"#5a4a7a",fontFamily:"'Courier New',monospace",marginBottom:2,fontSize:11}}>{r.p}</div>
-                  <div style={{color:"#7a6a55",fontSize:10}}>{r.d}</div>
-                </div>
+            <div className="section-title">Deployment Checklist</div>
+            {steps.map((s,i)=>(
+              <div className="checklist-item" key={i}>
+                <span style={{color:s.done?"#3a5a3a":"#9a8a75",fontSize:15,flexShrink:0}}>{s.done?"✓":"○"}</span>
+                <span style={{color:s.done?"#2a2218":"#7a6a55"}}>{s.label}</span>
               </div>
             ))}
           </div>
-
-          <div>
-            <div className="card" style={{marginBottom:16}}>
-              <div className="section-title">Why Vercel Needs Upstash</div>
-              <div style={{fontSize:13,color:"#5a4a35",lineHeight:1.8,fontStyle:"italic",marginBottom:12}}>
-                Vercel's runtime filesystem is <span style={{color:"#7a3a3a",fontStyle:"normal",fontWeight:500}}>read-only</span>. Your ledger cannot be written to a JSON file at runtime — it fails silently and returns empty arrays.
-              </div>
-              <div style={{fontSize:12,color:"#7a6a55",lineHeight:1.8}}>
-                Replace your file-based routes with Upstash Redis:
-              </div>
-              <div style={{marginTop:10,fontSize:10,background:"#2a2218",border:"1px solid #3a3228",padding:14,color:"#c8bfaa",overflowX:"auto",fontFamily:"'Courier New',monospace",lineHeight:1.7,maxHeight:260,overflowY:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
-                {"// app/api/ledger/route.ts\n// npm install @upstash/redis  <- run this first\n\n"}
-                {"import { Redis } from '@upstash/redis'\n"}
-                {"import { NextRequest, NextResponse } from 'next/server'\n\n"}
-                {"const redis = Redis.fromEnv()\n"}
-                {"const KEY   = 'fiducia:ledger'\n"}
-                {"const TOKEN = process.env.FIDUCIA_SYS_TOKEN\n\n"}
-                {"export async function GET() {\n"}
-                {"  const entries = await redis.lrange(KEY, 0, -1)\n"}
-                {"  return NextResponse.json(entries.reverse())\n}\n\n"}
-                {"export async function POST(req) {\n"}
-                {"  const tok = req.headers.get('x-fiducia-token')\n"}
-                {"  if (tok !== TOKEN)\n"}
-                {"    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })\n"}
-                {"  const body = await req.json()\n"}
-                {"  await redis.lpush(KEY, JSON.stringify(body))\n"}
-                {"  return NextResponse.json({ ok: true, id: body.id })\n}"}
-              </div>
+          <div className="card">
+            <div className="section-title">Why This Setup Works</div>
+            <div style={{fontSize:13,color:"#5a4a35",lineHeight:1.9,marginBottom:14}}>
+              The two route files (ledger and mint) use plain <span style={{fontFamily:"'Courier New',monospace",fontSize:12}}>fetch()</span> to talk to Upstash over HTTP — no npm packages required. They read your three environment variables directly from Vercel's secure runtime.
             </div>
-
-            <div className="card">
-              <div className="section-title">Deployment Checklist</div>
-              {[
-                {done:true,  label:"Vercel project created"},
-                {done:true,  label:"Upstash Redis connected"},
-                {done:true,  label:"FIDUCIA_SYS_TOKEN set in Vercel env vars"},
-                {done:false, label:"app/api/ledger/route.ts replaced with Redis version"},
-                {done:false, label:"app/page.tsx replaced with this dashboard"},
-                {done:false, label:"'use client' directive added to top of page.tsx"},
-                {done:false, label:"Google Fonts moved to app/layout.tsx"},
-                {done:false, label:"git push → Vercel auto-deploy"},
-                {done:false, label:"Test Connection above returns green"},
-              ].map((item,i)=>(
-                <div key={i} style={{display:"flex",gap:10,padding:"7px 0",borderBottom:"1px solid #e0d8cc",alignItems:"center",fontSize:13}}>
-                  <span style={{color:item.done?"#3a5a3a":"#9a8a75",fontSize:14,flexShrink:0}}>{item.done?"✓":"○"}</span>
-                  <span style={{color:item.done?"#2a2218":"#7a6a55"}}>{item.label}</span>
-                </div>
-              ))}
-            </div>
+            <div style={{fontSize:12,color:"#7a6a55",lineHeight:1.8,marginBottom:8}}>Your three required environment variables:</div>
+            {["UPSTASH_REDIS_REST_URL","UPSTASH_REDIS_REST_TOKEN","FIDUCIA_SYS_TOKEN"].map(v=>(
+              <div key={v} style={{fontFamily:"'Courier New',monospace",fontSize:11,padding:"6px 10px",background:"#f0ece4",border:"1px solid #c8bfaa",marginBottom:6,color:"#2a2218"}}>{v}</div>
+            ))}
+            <div className="sep"/>
+            <div className="section-title">Where to Find Each Value</div>
+            {[
+              {k:"UPSTASH_REDIS_REST_URL",v:"Upstash dashboard → your database → REST API tab"},
+              {k:"UPSTASH_REDIS_REST_TOKEN",v:"Upstash dashboard → your database → REST API tab"},
+              {k:"FIDUCIA_SYS_TOKEN",v:"Make up any long random string — this is your private mint password"},
+            ].map(r=>(
+              <div key={r.k} style={{padding:"8px 0",borderBottom:"1px solid #e0d8cc"}}>
+                <div style={{fontFamily:"'Courier New',monospace",fontSize:11,color:"#5a4a7a",marginBottom:3}}>{r.k}</div>
+                <div style={{fontSize:12,color:"#7a6a55"}}>{r.v}</div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -706,7 +541,7 @@ export default function App() {
       <style>{CSS}</style>
       <div className="app">
         <header className="hdr">
-          <div className="hdr-left">
+          <div>
             <div className="logo">Provenance Ledger</div>
             <div className="logo-sub">Stratum Authority Portal &amp; Systemic Ingestion Engine</div>
           </div>
@@ -715,11 +550,7 @@ export default function App() {
             <div className="hdr-entity-sub"><span className="status-dot"/>Fiducia Centrale / Central Trust Securities</div>
           </div>
         </header>
-        <nav style={{background:"#f7f4ee",borderBottom:"2px solid #2a2218",padding:"0 32px"}}>
-          <div style={{display:"flex",gap:0}}>
-            {TABS.map(t=><button key={t.id} className={`tab ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)}>{t.label}</button>)}
-          </div>
-        </nav>
+        <nav className="nav"><div className="tabs">{TABS.map(t=><button key={t.id} className={`tab ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)}>{t.label}</button>)}</div></nav>
         <div className="content">
           {tab==="overview"&&<Overview/>}
           {tab==="ledger"&&<Ledger/>}
