@@ -18,20 +18,7 @@ async function redisCall(command: unknown[]) {
   return data.result;
 }
 
-// GET /api/ledger — returns all ledger entries
-export async function GET() {
-  try {
-    const entries = await redisCall(['LRANGE', KEY, 0, -1]);
-    const parsed = (entries ?? []).map((e: string) => {
-      try { return JSON.parse(e); } catch { return e; }
-    });
-    return NextResponse.json(parsed.reverse());
-  } catch (err) {
-    return NextResponse.json({ error: 'Failed to read ledger' }, { status: 500 });
-  }
-}
-
-// POST /api/ledger — writes a new entry (requires X-Fiducia-Token header)
+// POST /api/mint — mints a new ledger block
 export async function POST(req: NextRequest) {
   const token = req.headers.get('x-fiducia-token');
   if (token !== SYS_TOKEN) {
@@ -39,11 +26,32 @@ export async function POST(req: NextRequest) {
   }
   try {
     const body = await req.json();
+
+    // Attach server-side metadata
     body._synced    = true;
     body._synced_at = new Date().toISOString();
+    body._minted_by = 'fiducia-mint-endpoint';
+
+    // Get last entry to build the chain
+    const last = await redisCall(['LINDEX', KEY, 0]);
+    let prevHash = 'GENESIS';
+    if (last) {
+      try {
+        const parsed = JSON.parse(last);
+        prevHash = parsed.legal?.doc_hash ?? parsed._synced_at ?? 'GENESIS';
+      } catch {}
+    }
+    body._prev_hash = prevHash;
+
     await redisCall(['LPUSH', KEY, JSON.stringify(body)]);
-    return NextResponse.json({ ok: true, id: body.id });
+
+    return NextResponse.json({
+      ok:        true,
+      id:        body.id,
+      prev_hash: prevHash,
+      synced_at: body._synced_at,
+    });
   } catch (err) {
-    return NextResponse.json({ error: 'Failed to write entry' }, { status: 500 });
+    return NextResponse.json({ error: 'Mint failed' }, { status: 500 });
   }
 }
