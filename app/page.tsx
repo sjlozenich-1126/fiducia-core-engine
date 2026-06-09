@@ -191,7 +191,7 @@ body{background:#f0ece4;color:#2a2218;font-family:'EB Garamond',Georgia,serif;}
 .checklist-item{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid #e0d8cc;align-items:center;font-size:13px;}
 `;
 
-const VERCEL_URL = "https://stratigraphic-authority-ledger.vercel.app";
+const VERCEL_URL = process.env.NEXT_PUBLIC_API_URL || "https://ledger.fiduciacentrale.com";
 
 export default function App() {
   const [tab, setTab] = useState("overview");
@@ -537,7 +537,7 @@ export default function App() {
             <div className="section-title">Test Your Live API</div>
             <div className="fld" style={{marginBottom:12}}>
               <label>Vercel API URL</label>
-              <input value={VERCEL_URL + "/api/ledger"} readOnly style={{opacity:0.7,fontFamily:"'Courier New',monospace",fontSize:12}}/>
+              <input value={process.env.NEXT_PUBLIC_API_URL || "https://ledger.fiduciacentrale.com/api/ledger"} readOnly style={{opacity:0.7,fontFamily:"'Courier New',monospace",fontSize:12}}/>
             </div>
             <div className="fld" style={{marginBottom:14}}>
               <label>FIDUCIA_SYS_TOKEN</label>
