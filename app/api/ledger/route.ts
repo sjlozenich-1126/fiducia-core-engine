@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Hardcoded while env vars are being diagnosed
+const BASE  = 'https://gorgeous-monarch-69026.upstash.io';
+const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN ?? '';
+const KEY   = 'fiducia:ledger';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -11,11 +16,9 @@ export async function OPTIONS() {
 }
 
 async function upstash(args: (string | number)[]) {
-  const url   = process.env.UPSTASH_REDIS_REST_URL!.replace(/\/$/, '');
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN!;
-  const path  = args.map(a => encodeURIComponent(String(a))).join('/');
-  const res   = await fetch(`${url}/${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const path = args.map(a => encodeURIComponent(String(a))).join('/');
+  const res  = await fetch(`${BASE}/${path}`, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
   });
   const json = await res.json();
   if (json.error) throw new Error(json.error);
@@ -24,7 +27,7 @@ async function upstash(args: (string | number)[]) {
 
 export async function GET() {
   try {
-    const raw = await upstash(['LRANGE', 'fiducia:ledger', 0, -1]);
+    const raw = await upstash(['LRANGE', KEY, 0, -1]);
     const entries = (raw ?? []).map((e: string) => {
       try { return JSON.parse(e); } catch { return e; }
     });
@@ -40,13 +43,19 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const token = req.headers.get('x-fiducia-token');
   if (token !== process.env.FIDUCIA_SYS_TOKEN) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: CORS });
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401, headers: CORS }
+    );
   }
   try {
     const body = await req.json();
     body._synced_at = new Date().toISOString();
-    await upstash(['LPUSH', 'fiducia:ledger', JSON.stringify(body)]);
-    return NextResponse.json({ ok: true, id: body.id }, { headers: CORS });
+    await upstash(['LPUSH', KEY, JSON.stringify(body)]);
+    return NextResponse.json(
+      { ok: true, id: body.id },
+      { headers: CORS }
+    );
   } catch (err) {
     return NextResponse.json(
       { error: String(err) },
