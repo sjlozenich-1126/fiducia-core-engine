@@ -2,9 +2,18 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 type LedgerEntry = {
   id: string;
   timestamp: string;
+  // server_timestamp is set by the API — use it when present, fall back to timestamp
+  server_timestamp?: string;
+  sequence?: number;
+  entry_hash?: string;        // Real SHA-256 from server
+  prev_entry_hash?: string;   // Previous entry's hash — chain link
+  authority_verified?: boolean; // Server confirmed authority enforcement passed
+  authority_model_version?: string;
   asset: { id: string; type: string; label: string };
   action: { token: string; stratum: string; reason: string };
   parties: { issuer: string; from: string | null; to: string | null };
@@ -13,7 +22,9 @@ type LedgerEntry = {
   authority: { stratum: string; tier: number; level: number };
   policy: { gdr_index_delta: number | null };
   metadata: { tags: string[]; notes: string; version: string };
-  _local?: boolean;
+  _local?: boolean;   // true = not yet persisted to Redis
+  _rejected?: boolean; // true = server rejected this entry (authority failure etc.)
+  _reject_reason?: string;
 };
 
 type MintFormState = {
@@ -34,8 +45,12 @@ type MintFormState = {
   notes: string;
 };
 
-type MintStatusState = { ok: boolean; msg: string; id?: string } | null;
+type MintStatusState = { ok: boolean; msg: string; id?: string; detail?: string } | null;
 
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+// Client-side hash is DISPLAY ONLY — used while waiting for server response
+// The canonical hash comes from the server's SHA-256 computation
 function hashSimulate(str: string) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = (h * 0x01000193) >>> 0; }
@@ -49,46 +64,65 @@ function timeSince(ts: string) {
   if (d < 86400000) return `${Math.floor(d/3600000)}h ago`;
   return new Date(ts).toLocaleDateString();
 }
-function truncHash(h?: string) { if (!h) return "—"; return h.length > 16 ? h.slice(0,8)+"…"+h.slice(-4) : h; }
+function truncHash(h?: string) {
+  if (!h || h === "GENESIS") return h || "—";
+  return h.length > 16 ? h.slice(0,8)+"…"+h.slice(-6) : h;
+}
+function isRealHash(h?: string) {
+  return h ? /^[0-9a-f]{64}$/i.test(h) : false;
+}
+
+// ── Authority / Stratum data ──────────────────────────────────────────────────
 
 const STRATA = [
-  { code:"01-Inherent",      name:"Inherent Identity",    short:"S01", color:"#5a7a5a", desc:"DNA, lineage, biological identity" },
-  { code:"02-Constitutional",name:"Constitutional",       short:"S02", color:"#7a6a9a", desc:"Charters, constitutions, covenants" },
-  { code:"03-Statutory",     name:"Statutory",            short:"S03", color:"#8a7aaa", desc:"Rules, policies, compliance" },
-  { code:"04-Administrative",name:"Administrative",       short:"S04", color:"#6a8aaa", desc:"Execution, enforcement, ops" },
-  { code:"05-Certificatory", name:"Certificatory",        short:"S05", color:"#5a8a7a", desc:"Attestations, notarizations" },
-  { code:"06-Provenance",    name:"Provenance",           short:"S06", color:"#9a8a5a", desc:"Chain of title, records" },
-  { code:"07-Hereditary",    name:"Hereditary / Majorat", short:"S07", color:"#aa6a7a", desc:"Lineage-based, heir authority" },
-  { code:"08-Procedural",    name:"Procedural Legal",     short:"S08", color:"#aa7a5a", desc:"Court filings, legal actions" },
+  { code:"01-Inherent",       name:"Inherent Identity",     short:"S01", color:"#5a7a5a", desc:"DNA, lineage, biological identity",       can:["REGISTER_IDENTITY"] },
+  { code:"02-Constitutional", name:"Constitutional",        short:"S02", color:"#7a6a9a", desc:"Charters, constitutions, covenants",       can:["DEFINE_CONSTITUTION","REGISTER_AUTHORITY_MODEL","REGISTER_INSTRUMENT","INTERPRET_CONSTITUTION"] },
+  { code:"03-Statutory",      name:"Statutory",             short:"S03", color:"#8a7aaa", desc:"Rules, policies, compliance",              can:["REGISTER_DOC","ATTEST_DOC","REGISTER_INSTRUMENT"] },
+  { code:"04-Administrative", name:"Administrative",        short:"S04", color:"#6a8aaa", desc:"Execution, enforcement, ops",              can:["TRANSFER_FDC","APPROVE_CREDIT","REGISTER_DOC"] },
+  { code:"05-Certificatory",  name:"Certificatory",         short:"S05", color:"#5a8a7a", desc:"Attestations, notarizations",             can:["ATTEST_DOC","REDEEM_FDC","REGISTER_DOC"] },
+  { code:"06-Provenance",     name:"Provenance",            short:"S06", color:"#9a8a5a", desc:"Chain of title, records",                 can:["REGISTER_DOC","ATTEST_DOC","REQUEST_CREDIT"] },
+  { code:"07-Hereditary",     name:"Hereditary / Majorat",  short:"S07", color:"#aa6a7a", desc:"Lineage-based, heir authority",           can:["MINT_FDC","MINT_OBLIGATION","REGISTER_DOC","REGISTER_INSTRUMENT"] },
+  { code:"08-Procedural",     name:"Procedural Legal",      short:"S08", color:"#aa7a5a", desc:"Court filings, legal actions",            can:["FILE_QUIET_TITLE","INITIATE_LEGAL","REGISTER_DOC"] },
 ];
 
 const ACTION_TOKENS = {
-  "REGISTER_IDENTITY":       { label:"Register Identity",        stratum:"01-Inherent",       tier:8, level:8 },
-  "REGISTER_INSTRUMENT":     { label:"Register Instrument",      stratum:"02-Constitutional", tier:8, level:4 },
-  "MINT_FDC":                { label:"Mint FDC",                 stratum:"07-Hereditary",     tier:8, level:4 },
-  "TRANSFER_FDC":            { label:"Transfer FDC",             stratum:"04-Administrative", tier:3, level:3 },
-  "REDEEM_FDC":              { label:"Redeem FDC",               stratum:"05-Certificatory",  tier:5, level:3 },
-  "REGISTER_DOC":            { label:"Register Document",        stratum:"06-Provenance",     tier:3, level:4 },
-  "ATTEST_DOC":              { label:"Attest Document",          stratum:"05-Certificatory",  tier:4, level:4 },
-  "FILE_QUIET_TITLE":        { label:"File Quiet Title",         stratum:"08-Procedural",     tier:3, level:4 },
-  "INITIATE_LEGAL":          { label:"Initiate Legal Proceeding",stratum:"08-Procedural",     tier:3, level:4 },
-  "REGISTER_AUTHORITY_MODEL":{ label:"Register Authority Model", stratum:"02-Constitutional", tier:8, level:4 },
+  "REGISTER_IDENTITY":        { label:"Register Identity",         stratum:"01-Inherent",       tier:8, level:8 },
+  "REGISTER_INSTRUMENT":      { label:"Register Instrument",       stratum:"02-Constitutional", tier:8, level:4 },
+  "MINT_FDC":                 { label:"Mint FDC",                  stratum:"07-Hereditary",     tier:8, level:4 },
+  "TRANSFER_FDC":             { label:"Transfer FDC",              stratum:"04-Administrative", tier:3, level:3 },
+  "REDEEM_FDC":               { label:"Redeem FDC",                stratum:"05-Certificatory",  tier:5, level:3 },
+  "REGISTER_DOC":             { label:"Register Document",         stratum:"06-Provenance",     tier:3, level:4 },
+  "ATTEST_DOC":               { label:"Attest Document",           stratum:"05-Certificatory",  tier:4, level:4 },
+  "FILE_QUIET_TITLE":         { label:"File Quiet Title",          stratum:"08-Procedural",     tier:3, level:4 },
+  "INITIATE_LEGAL":           { label:"Initiate Legal Proceeding", stratum:"08-Procedural",     tier:3, level:4 },
+  "REGISTER_AUTHORITY_MODEL": { label:"Register Authority Model",  stratum:"02-Constitutional", tier:8, level:4 },
+  "DEFINE_CONSTITUTION":      { label:"Define Constitution",       stratum:"02-Constitutional", tier:8, level:8 },
+  "INTERPRET_CONSTITUTION":   { label:"Interpret Constitution",    stratum:"02-Constitutional", tier:8, level:4 },
+  "MINT_OBLIGATION":          { label:"Mint Obligation",           stratum:"07-Hereditary",     tier:7, level:4 },
+  "APPROVE_CREDIT":           { label:"Approve Credit",            stratum:"04-Administrative", tier:4, level:3 },
+  "REQUEST_CREDIT":           { label:"Request Credit",            stratum:"06-Provenance",     tier:2, level:2 },
 };
 
 type ActionToken = keyof typeof ACTION_TOKENS;
 
 const INSTRUMENTS = ["currency","identity","credit","certificate","doc_provenance","legal_filing","legal_procedure","governance","monetary_instrument_definition","authority_framework"];
 
-const LOCAL_KEY = "fc_ledger_v4";
+// ── Local storage ─────────────────────────────────────────────────────────────
+
+const LOCAL_KEY = "fc_ledger_v5"; // bumped version — clears old v4 cache
 function loadLocal(): LedgerEntry[] { try { const d=localStorage.getItem(LOCAL_KEY); return d ? (JSON.parse(d) as LedgerEntry[]) : []; } catch { return []; } }
 function saveLocal(entries: LedgerEntry[]) { try { localStorage.setItem(LOCAL_KEY, JSON.stringify(entries)); } catch {} }
 
+// ── Demo seed data ────────────────────────────────────────────────────────────
+
 const DEMO: LedgerEntry[] = [
-  { id:"STRATUM01-IDENTITY-SJL", timestamp:new Date(Date.now()-86400000*3).toISOString(), asset:{id:"SJL-ARCHAEOGENETIC",type:"identity_record",label:"Archaeogenetic Identity & Lineage Certification — SJL"}, action:{token:"REGISTER_IDENTITY",stratum:"01-Inherent",reason:"Establish inherent biological and ancestral identity."}, parties:{issuer:"Archaeogenetic Laboratory NG-25051",from:null,to:"Shane Jonathan Lozenich"}, instrument:{type:"identity",unit:null,amount:null}, legal:{jurisdiction:"BIOLOGICAL",forum:"NG-25051",upstream_refs:[],doc_hash:"bb1b36ad40b59127cf5f5c1245d453c4"}, authority:{stratum:"01-Inherent",tier:8,level:8}, policy:{gdr_index_delta:null}, metadata:{tags:["identity","lineage"],notes:"Dual-horizon archaeogenetic identity record.",version:"1.0"} },
-  { id:"STRATUM02-AUTH-V1", timestamp:new Date(Date.now()-86400000*2).toISOString(), asset:{id:"AUTH-CONSTITUTION-V1",type:"authority_framework",label:"Unified Authority Constitution v1.0"}, action:{token:"REGISTER_AUTHORITY_MODEL",stratum:"02-Constitutional",reason:"Define unified authority framework."}, parties:{issuer:"Fiducia Centrale",from:null,to:null}, instrument:{type:"governance",unit:null,amount:null}, legal:{jurisdiction:"ON-CHAIN",forum:"Fiducia Centrale — Constitutional Chamber",upstream_refs:[],doc_hash:"AUTH-CONSTITUTION-HASH-V1"}, authority:{stratum:"02-Constitutional",tier:8,level:4}, policy:{gdr_index_delta:null}, metadata:{tags:["authority","constitution"],notes:"Unified authority framework.",version:"1.0"} },
-  { id:"STRATUM02-FDC-V1", timestamp:new Date(Date.now()-86400000*1.5).toISOString(), asset:{id:"FDC-CONSTITUTION-V1",type:"monetary_instrument_definition",label:"Fiducial Credit (FDC) — Monetary Constitution v1.0"}, action:{token:"REGISTER_INSTRUMENT",stratum:"02-Constitutional",reason:"Establish FDC as hybrid institutional currency."}, parties:{issuer:"Fiducia Centrale — Constitutional Authority",from:null,to:null}, instrument:{type:"currency",unit:"FDC",amount:null}, legal:{jurisdiction:"ON-CHAIN",forum:"Fiducia Centrale",upstream_refs:[],doc_hash:"FDC-CONSTITUTION-HASH-V1"}, authority:{stratum:"02-Constitutional",tier:8,level:4}, policy:{gdr_index_delta:null}, metadata:{tags:["currency","FDC"],notes:"Hybrid currency backed by GDRI.",version:"1.0"} },
-  { id:"STRATUM08-LEGAL-26-2-01443", timestamp:new Date(Date.now()-86400000).toISOString(), asset:{id:"QUIET-TITLE-SJL",type:"legal_claim",label:"Petition for Declaratory Judgment & Quiet Title — Seattle-Bremerton Majorat"}, action:{token:"INITIATE_LEGAL",stratum:"08-Procedural",reason:"Assert rights and challenge adverse claims."}, parties:{issuer:"Shane Jonathan Lozenich",from:"Shane Jonathan Lozenich",to:"King County Superior Court"}, instrument:{type:"legal_procedure",unit:null,amount:null}, legal:{jurisdiction:"WA-KING-COUNTY",forum:"King County Superior Court",upstream_refs:[],doc_hash:"PETITION-26-2-01443-4-SEA"}, authority:{stratum:"08-Procedural",tier:3,level:4}, policy:{gdr_index_delta:null}, metadata:{tags:["legal","quiet_title"],notes:"Pro se filing; accepted by King County Superior Court.",version:"1.0"} },
+  { id:"STRATUM01-IDENTITY-SJL", timestamp:new Date(Date.now()-86400000*3).toISOString(), asset:{id:"SJL-ARCHAEOGENETIC",type:"identity_record",label:"Archaeogenetic Identity & Lineage Certification — SJL"}, action:{token:"REGISTER_IDENTITY",stratum:"01-Inherent",reason:"Establish inherent biological and ancestral identity."}, parties:{issuer:"Archaeogenetic Laboratory NG-25051",from:null,to:"Shane Jonathan Lozenich"}, instrument:{type:"identity",unit:null,amount:null}, legal:{jurisdiction:"BIOLOGICAL",forum:"NG-25051",upstream_refs:[],doc_hash:"bb1b36ad40b59127cf5f5c1245d453c4bb1b36ad40b59127cf5f5c1245d453c4"}, authority:{stratum:"01-Inherent",tier:8,level:8}, policy:{gdr_index_delta:null}, metadata:{tags:["identity","lineage"],notes:"Dual-horizon archaeogenetic identity record.",version:"1.0"}, _local:true },
+  { id:"STRATUM02-AUTH-V1", timestamp:new Date(Date.now()-86400000*2).toISOString(), asset:{id:"AUTH-CONSTITUTION-V1",type:"authority_framework",label:"Unified Authority Constitution v1.0"}, action:{token:"REGISTER_AUTHORITY_MODEL",stratum:"02-Constitutional",reason:"Define unified authority framework."}, parties:{issuer:"Fiducia Centrale",from:null,to:null}, instrument:{type:"governance",unit:null,amount:null}, legal:{jurisdiction:"ON-CHAIN",forum:"Fiducia Centrale — Constitutional Chamber",upstream_refs:[],doc_hash:"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}, authority:{stratum:"02-Constitutional",tier:8,level:4}, policy:{gdr_index_delta:null}, metadata:{tags:["authority","constitution"],notes:"Unified authority framework.",version:"1.0"}, _local:true },
+  { id:"STRATUM02-FDC-V1", timestamp:new Date(Date.now()-86400000*1.5).toISOString(), asset:{id:"FDC-CONSTITUTION-V1",type:"monetary_instrument_definition",label:"Fiducial Credit (FDC) — Monetary Constitution v1.0"}, action:{token:"REGISTER_INSTRUMENT",stratum:"02-Constitutional",reason:"Establish FDC as hybrid institutional currency."}, parties:{issuer:"Fiducia Centrale — Constitutional Authority",from:null,to:null}, instrument:{type:"currency",unit:"FDC",amount:null}, legal:{jurisdiction:"ON-CHAIN",forum:"Fiducia Centrale",upstream_refs:[],doc_hash:"c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"}, authority:{stratum:"02-Constitutional",tier:8,level:4}, policy:{gdr_index_delta:null}, metadata:{tags:["currency","FDC"],notes:"Hybrid currency backed by GDRI.",version:"1.0"}, _local:true },
+  { id:"STRATUM08-LEGAL-26-2-01443", timestamp:new Date(Date.now()-86400000).toISOString(), asset:{id:"QUIET-TITLE-SJL",type:"legal_claim",label:"Petition for Declaratory Judgment & Quiet Title — Seattle-Bremerton Majorat"}, action:{token:"INITIATE_LEGAL",stratum:"08-Procedural",reason:"Assert rights and challenge adverse claims."}, parties:{issuer:"Shane Jonathan Lozenich",from:"Shane Jonathan Lozenich",to:"King County Superior Court"}, instrument:{type:"legal_procedure",unit:null,amount:null}, legal:{jurisdiction:"WA-KING-COUNTY",forum:"King County Superior Court",upstream_refs:[],doc_hash:"e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6"}, authority:{stratum:"08-Procedural",tier:3,level:4}, policy:{gdr_index_delta:null}, metadata:{tags:["legal","quiet_title"],notes:"Pro se filing; accepted by King County Superior Court.",version:"1.0"}, _local:true },
 ];
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
@@ -123,6 +157,9 @@ body{background:#f0ece4;color:#2a2218;font-family:'EB Garamond',Georgia,serif;}
 .badge-amber{background:#f7f0e2;color:#7a5a20;border-color:#c8a860;}
 .badge-red{background:#f7edec;color:#7a3a3a;border-color:#c8a0a0;}
 .badge-blue{background:#ecf0f7;color:#3a4a7a;border-color:#a0aed0;}
+.badge-verified{background:#edf2ed;color:#3a5a3a;border-color:#a0b8a0;font-size:9px;}
+.badge-local{background:#f7f0e2;color:#7a5a20;border-color:#c8a860;font-size:8px;}
+.badge-rejected{background:#f7edec;color:#7a3a3a;border-color:#c8a0a0;font-size:9px;}
 .strat-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;}
 .strat-label{font-size:11px;color:#5a4a35;width:140px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .strat-bar-bg{flex:1;height:5px;background:#e0d8cc;}
@@ -139,6 +176,8 @@ body{background:#f0ece4;color:#2a2218;font-family:'EB Garamond',Georgia,serif;}
 .chip-s{background:#f0ecf7;color:#5a4a7a;border-color:#b8aad0;}
 .chip-t{background:#edf2ed;color:#3a5a3a;border-color:#a0b8a0;}
 .chip-l{background:#f7f0e2;color:#7a5a20;border-color:#c8a860;}
+.chip-verified{background:#edf2ed;color:#3a5a3a;border-color:#a0b8a0;font-size:8px;padding:1px 5px;}
+.chip-unverified{background:#f0ece4;color:#9a8a75;border-color:#c8bfaa;font-size:8px;padding:1px 5px;}
 .authority-triple{display:flex;gap:5px;flex-wrap:wrap;}
 .section-title{font-size:10px;letter-spacing:0.25em;text-transform:uppercase;color:#7a6a55;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #c8bfaa;}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
@@ -159,11 +198,11 @@ body{background:#f0ece4;color:#2a2218;font-family:'EB Garamond',Georgia,serif;}
 .ledger-tbl th{text-align:left;font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:#7a6a55;padding:8px 12px;border-bottom:2px solid #2a2218;font-weight:400;}
 .ledger-tbl td{padding:10px 12px;border-bottom:1px solid #e0d8cc;vertical-align:top;font-size:13px;}
 .ledger-tbl tr:hover td{background:#f0ece4;}
-.alert{padding:10px 14px;font-size:13px;margin-bottom:14px;display:flex;align-items:center;gap:8px;border:1px solid;}
+.alert{padding:10px 14px;font-size:13px;margin-bottom:14px;display:flex;align-items:flex-start;gap:8px;border:1px solid;}
 .alert-green{background:#edf2ed;border-color:#a0b8a0;color:#3a5a3a;}
 .alert-red{background:#f7edec;border-color:#c8a0a0;color:#7a3a3a;}
 .alert-blue{background:#ecf0f7;border-color:#a0aed0;color:#3a4a7a;}
-.spinner{width:14px;height:14px;border:2px solid rgba(42,34,24,0.2);border-top-color:#2a2218;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;}
+.spinner{width:14px;height:14px;border:2px solid rgba(42,34,24,0.2);border-top-color:#2a2218;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0;margin-top:2px;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .cert-box{background:#f7f4ee;border:1px solid #c8bfaa;padding:32px;position:relative;overflow:hidden;}
 .cert-outer-border{position:absolute;inset:8px;border:1px solid #c8bfaa;pointer-events:none;}
@@ -185,26 +224,41 @@ body{background:#f0ece4;color:#2a2218;font-family:'EB Garamond',Georgia,serif;}
 .filter-row{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
 .detail-label{font-size:9px;text-transform:uppercase;letter-spacing:0.15em;color:#7a6a55;}
 .detail-val{font-size:13px;color:#2a2218;word-break:break-all;}
+.detail-val.mono{font-family:'Courier New',monospace;font-size:10px;color:#5a4a7a;}
 .entry-detail{background:#f0ece4;border:1px solid #c8bfaa;padding:16px;margin-top:6px;}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 .detail-row{display:flex;flex-direction:column;gap:3px;}
+.chain-block{background:#f0ece4;border-left:3px solid #5a4a7a;padding:10px 14px;margin-top:8px;font-family:'Courier New',monospace;font-size:10px;line-height:1.8;color:#5a4a7a;}
 .checklist-item{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid #e0d8cc;align-items:center;font-size:13px;}
+.authority-warning{background:#f7edec;border:1px solid #c8a0a0;padding:10px 14px;font-size:12px;color:#7a3a3a;margin-bottom:10px;}
 `;
 
 const VERCEL_URL = process.env.NEXT_PUBLIC_API_URL || "https://ledger.fiduciacentrale.com";
+
+// ── Helper: check if a stratum can perform an action (mirrors lib/authority.ts) ─
+// Kept here so the form can show a warning BEFORE submitting
+function clientCanPerform(stratum: string, action: string): boolean {
+  const s = STRATA.find(x => x.code === stratum);
+  if (!s) return false;
+  return s.can.includes(action);
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export default function App() {
   const [tab, setTab] = useState("overview");
   const [ledger, setLedger] = useState<LedgerEntry[]>(() => {
     const stored = loadLocal();
-    if (!stored.length) {
-      saveLocal(DEMO);
-      return DEMO;
-    }
+    if (!stored.length) { saveLocal(DEMO); return DEMO; }
     return stored;
   });
   const [loading, setLoading] = useState(false);
-  const [mintForm, setMintForm] = useState<MintFormState>({ action_token:"REGISTER_DOC", stratum:"06-Provenance", asset_label:"", asset_type:"doc_provenance", issuer:"Fiducia Centrale", to:"", instrument_type:"doc_provenance", instrument_unit:"", instrument_amount:"", reason:"", jurisdiction:"ON-CHAIN", tier:4, level:3, tags:"", notes:"" });
+  const [mintForm, setMintForm] = useState<MintFormState>({
+    action_token:"REGISTER_DOC", stratum:"06-Provenance", asset_label:"", asset_type:"doc_provenance",
+    issuer:"Fiducia Centrale", to:"", instrument_type:"doc_provenance", instrument_unit:"",
+    instrument_amount:"", reason:"", jurisdiction:"ON-CHAIN", tier:4, level:3, tags:"", notes:""
+  });
+  const [mintToken, setMintToken] = useState("");
   const [mintStatus, setMintStatus] = useState<MintStatusState>(null);
   const [selectedEntry, setSelectedEntry] = useState<LedgerEntry | null>(null);
   const [certEntry, setCertEntry] = useState<LedgerEntry | null>(null);
@@ -213,8 +267,12 @@ export default function App() {
   const [connectMsg, setConnectMsg] = useState<string | null>(null);
   const [connectOk, setConnectOk] = useState(false);
 
-  const fdc = useMemo(() => ledger.filter((entry) => entry.action.token === "MINT_FDC").reduce((sum, entry) => sum + (entry.instrument.amount || 0), 0), [ledger]);
-  const gdri = useMemo(() => 1000000 + ledger.reduce((sum, entry) => sum + (entry.policy.gdr_index_delta || 0), 0), [ledger]);
+  const fdc = useMemo(() => ledger.filter(e => e.action.token === "MINT_FDC").reduce((sum, e) => sum + (e.instrument.amount || 0), 0), [ledger]);
+  const gdri = useMemo(() => 1000000 + ledger.reduce((sum, e) => sum + (e.policy.gdr_index_delta || 0), 0), [ledger]);
+
+  // Count genuinely server-verified entries
+  const verifiedCount = useMemo(() => ledger.filter(e => e.authority_verified === true && !e._local).length, [ledger]);
+  const localCount = useMemo(() => ledger.filter(e => e._local).length, [ledger]);
 
   function handleMintChange(k: keyof MintFormState, v: string) {
     setMintForm(f => {
@@ -230,98 +288,234 @@ export default function App() {
   }
 
   async function handleMint(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault(); setLoading(true); setMintStatus(null);
-    try {
-      const now = new Date().toISOString();
-      const id = generateId(mintForm.action_token.slice(0, 6));
-      const amount = mintForm.instrument_amount ? parseFloat(mintForm.instrument_amount) : null;
-      const entry: LedgerEntry = {
-        id,
-        timestamp: now,
-        asset: { id: generateId("ASSET"), type: mintForm.asset_type, label: mintForm.asset_label || "Untitled Entry" },
-        action: { token: mintForm.action_token, stratum: mintForm.stratum, reason: mintForm.reason },
-        parties: { issuer: mintForm.issuer || "Fiducia Centrale", from: mintForm.issuer || null, to: mintForm.to || null },
-        instrument: { type: mintForm.instrument_type, unit: mintForm.instrument_unit || null, amount },
-        legal: { jurisdiction: mintForm.jurisdiction, forum: "Fiducia Centrale", upstream_refs: [], doc_hash: "0x" + hashSimulate(id + now + mintForm.asset_label) },
-        authority: { stratum: mintForm.stratum, tier: Number(mintForm.tier), level: Number(mintForm.level) },
-        policy: { gdr_index_delta: mintForm.action_token === "MINT_FDC" ? -(amount || 0) : null },
-        metadata: { tags: mintForm.tags ? mintForm.tags.split(",").map(t => t.trim()).filter(Boolean) : [], notes: mintForm.notes, version: "1.0" },
-        _local: true,
-      };
-      const nl = [entry, ...ledger];
+    e.preventDefault();
+    setLoading(true);
+    setMintStatus(null);
+
+    const now = new Date().toISOString();
+    const id = generateId(mintForm.action_token.slice(0, 6));
+    const amount = mintForm.instrument_amount ? parseFloat(mintForm.instrument_amount) : null;
+
+    // Build the entry payload
+    const entryPayload = {
+      id,
+      timestamp: now,
+      asset: { id: generateId("ASSET"), type: mintForm.asset_type, label: mintForm.asset_label || "Untitled Entry" },
+      action: { token: mintForm.action_token, stratum: mintForm.stratum, reason: mintForm.reason },
+      parties: { issuer: mintForm.issuer || "Fiducia Centrale", from: mintForm.issuer || null, to: mintForm.to || null },
+      instrument: { type: mintForm.instrument_type, unit: mintForm.instrument_unit || null, amount },
+      legal: {
+        jurisdiction: mintForm.jurisdiction,
+        forum: "Fiducia Centrale",
+        upstream_refs: [],
+        // Client-side placeholder hash — server will upgrade this to real SHA-256
+        doc_hash: hashSimulate(id + now + mintForm.asset_label),
+      },
+      authority: { stratum: mintForm.stratum, tier: Number(mintForm.tier), level: Number(mintForm.level) },
+      policy: { gdr_index_delta: mintForm.action_token === "MINT_FDC" ? -(amount || 0) : null },
+      metadata: {
+        tags: mintForm.tags ? mintForm.tags.split(",").map(t => t.trim()).filter(Boolean) : [],
+        notes: mintForm.notes,
+        version: "1.0"
+      },
+    };
+
+    if (!mintToken) {
+      // No token provided — save locally only, don't attempt API
+      const localEntry: LedgerEntry = { ...entryPayload, _local: true };
+      const nl = [localEntry, ...ledger];
       setLedger(nl);
       saveLocal(nl);
-      setMintStatus({ ok: true, msg: "Entry registered to ledger.", id: entry.id });
-      setMintForm(f => ({ ...f, asset_label: "", reason: "", notes: "", tags: "", to: "", instrument_amount: "" }));
+      setMintStatus({
+        ok: true,
+        msg: "Entry saved locally (no API token provided). Enter your FIDUCIA_SYS_TOKEN above to persist to the live ledger.",
+        id,
+      });
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(VERCEL_URL + "/api/mint", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Fiducia-Token": mintToken,
+        },
+        body: JSON.stringify(entryPayload),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.ok) {
+        // Server accepted — upgrade the local entry with server-assigned fields
+        const verifiedEntry: LedgerEntry = {
+          ...entryPayload,
+          server_timestamp: data.server_timestamp,
+          sequence: data.sequence,
+          entry_hash: data.entry_hash,           // Real SHA-256
+          prev_entry_hash: data.prev_entry_hash,  // Chain link
+          authority_verified: true,
+          authority_model_version: "1.0.0",
+          _local: false,
+        };
+        const nl = [verifiedEntry, ...ledger];
+        setLedger(nl);
+        saveLocal(nl);
+        setMintStatus({
+          ok: true,
+          msg: `Entry registered and cryptographically sealed. Sequence #${data.sequence} — Hash: ${(data.entry_hash as string).slice(0, 16)}…`,
+          id,
+        });
+      } else {
+        // Server rejected — save locally with rejection flag so it's visible
+        const rejectedEntry: LedgerEntry = {
+          ...entryPayload,
+          _local: true,
+          _rejected: true,
+          _reject_reason: data.detail || data.error || "Unknown error",
+        };
+        const nl = [rejectedEntry, ...ledger];
+        setLedger(nl);
+        saveLocal(nl);
+        setMintStatus({
+          ok: false,
+          msg: data.error || "Registration failed",
+          detail: data.detail,
+        });
+      }
     } catch (err: unknown) {
+      // Network error — save locally
+      const localEntry: LedgerEntry = { ...entryPayload, _local: true };
+      const nl = [localEntry, ...ledger];
+      setLedger(nl);
+      saveLocal(nl);
       const message = err instanceof Error ? err.message : "Unknown error";
-      setMintStatus({ ok: false, msg: "Registration failed: " + message });
-    } finally { setLoading(false); }
+      setMintStatus({
+        ok: false,
+        msg: "Could not reach API — entry saved locally. " + message,
+      });
+    } finally {
+      setLoading(false);
+      setMintForm(f => ({ ...f, asset_label: "", reason: "", notes: "", tags: "", to: "", instrument_amount: "" }));
+    }
   }
 
-  function renderAuthority(a: LedgerEntry["authority"] | null | undefined) {
-    if(!a) return null;
-    const s=STRATA.find(x=>x.code===a.stratum);
-    return <div className="authority-triple"><span className="auth-chip chip-s">{s?.short||a.stratum}</span><span className="auth-chip chip-t">T{a.tier}</span><span className="auth-chip chip-l">L{a.level}</span></div>;
+  function renderAuthority(entry: LedgerEntry) {
+    const a = entry.authority;
+    if (!a) return null;
+    const s = STRATA.find(x => x.code === a.stratum);
+    const isVerified = entry.authority_verified === true && !entry._local;
+    const isRejected = entry._rejected;
+    return (
+      <div className="authority-triple">
+        <span className="auth-chip chip-s">{s?.short || a.stratum}</span>
+        <span className="auth-chip chip-t">T{a.tier}</span>
+        <span className="auth-chip chip-l">L{a.level}</span>
+        {isVerified && <span className="auth-chip chip-verified">✓ enforced</span>}
+        {isRejected && <span className="auth-chip" style={{background:"#f7edec",color:"#7a3a3a",border:"1px solid #c8a0a0",fontSize:"8px",padding:"1px 5px"}}>✗ rejected</span>}
+        {!isVerified && !isRejected && <span className="auth-chip chip-unverified">local</span>}
+      </div>
+    );
   }
 
-  const filteredLedger = filterStratum==="all" ? ledger : ledger.filter(e=>e.authority?.stratum===filterStratum);
+  const filteredLedger = filterStratum === "all" ? ledger : ledger.filter(e => e.authority?.stratum === filterStratum);
+
+  // ── renderOverview ──────────────────────────────────────────────────────────
 
   function renderOverview() {
-    const counts = STRATA.map(s=>({...s,count:ledger.filter(e=>e.authority?.stratum===s.code).length}));
+    const counts = STRATA.map(s => ({ ...s, count: ledger.filter(e => e.authority?.stratum === s.code).length }));
     const total = ledger.length;
-    const verifiedPct = total>0?Math.round((ledger.filter(e=>e.action?.token).length/total)*100):0;
     return (
       <div>
-        <div className="page-header"><h2>Stratigraphic Provenance Engine</h2><p>Identity · Finance · Security · Chain of Authority</p></div>
+        <div className="page-header">
+          <h2>Stratigraphic Provenance Engine</h2>
+          <p>Identity · Finance · Security · Chain of Authority</p>
+        </div>
         <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
           <span className="badge badge-green">● Ledger Active</span>
           <span className="badge badge-purple">● FDC-CONSTITUTION-V1</span>
           <span className="badge badge-blue">● AUTH-CONSTITUTION-V1</span>
+          {verifiedCount > 0 && <span className="badge badge-green">✓ {verifiedCount} Server-Verified</span>}
+          {localCount > 0 && <span className="badge badge-amber">◌ {localCount} Local Only</span>}
         </div>
         <div className="grid4">
-          {[{label:"Ledger Entries",val:total,sub:"immutable blocks"},{label:"FDC Supply",val:fdc.toLocaleString(),sub:"fiducial credits"},{label:"GDRI Balance",val:(gdri/1000000).toFixed(2)+"M",sub:"global debt reduction"},{label:"Integrity",val:verifiedPct+"%",sub:"verified entries"}].map(m=>(
-            <div className="card" key={m.label}><div className="card-h">{m.label}</div><div className="metric-val">{m.val}</div><div className="metric-sub">{m.sub}</div></div>
+          {[
+            {label:"Ledger Entries",    val:total,                         sub:"immutable blocks"},
+            {label:"FDC Supply",        val:fdc.toLocaleString(),          sub:"fiducial credits"},
+            {label:"GDRI Balance",      val:(gdri/1000000).toFixed(2)+"M", sub:"global debt reduction"},
+            {label:"Verified On-Chain", val:verifiedCount+"/"+total,       sub:"server-enforced entries"},
+          ].map(m => (
+            <div className="card" key={m.label}>
+              <div className="card-h">{m.label}</div>
+              <div className="metric-val">{m.val}</div>
+              <div className="metric-sub">{m.sub}</div>
+            </div>
           ))}
         </div>
         <div className="grid2">
           <div className="card">
             <div className="card-h">Stratigraphic Authority Layers</div>
-            {counts.map(s=>(
+            {counts.map(s => (
               <div className="strat-row" key={s.code}>
                 <div className="strat-label" title={s.name}>{s.short} · {s.name}</div>
-                <div className="strat-bar-bg"><div className="strat-bar" style={{width:total>0?Math.max((s.count/total)*100,s.count>0?4:0)+"%":"0%",background:s.color}}/></div>
+                <div className="strat-bar-bg">
+                  <div className="strat-bar" style={{width:total>0?Math.max((s.count/total)*100,s.count>0?4:0)+"%":"0%",background:s.color}}/>
+                </div>
                 <div className="strat-pct">{s.count}</div>
               </div>
             ))}
           </div>
           <div className="card">
             <div className="card-h">Provenance Feed</div>
-            {ledger.slice(0,8).map(e=>(
+            {ledger.slice(0,8).map(e => (
               <div className="feed-item" key={e.id}>
                 <div>
-                  <div className="feed-action">{(e.action?.token ? ACTION_TOKENS[e.action.token as ActionToken]?.label : undefined) || e.action?.token}</div>
-                  <div className="feed-hash">{truncHash(e.legal?.doc_hash)}</div>
+                  <div className="feed-action">
+                    {(e.action?.token ? ACTION_TOKENS[e.action.token as ActionToken]?.label : undefined) || e.action?.token}
+                    {e.authority_verified && !e._local && <span style={{color:"#3a5a3a",fontSize:10,marginLeft:6}}>✓</span>}
+                    {e._rejected && <span style={{color:"#7a3a3a",fontSize:10,marginLeft:6}}>✗</span>}
+                  </div>
+                  <div className="feed-hash">
+                    {isRealHash(e.entry_hash) ? `sha256:${e.entry_hash!.slice(0,12)}…` : truncHash(e.legal?.doc_hash)}
+                  </div>
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}><div className="feed-time">{timeSince(e.timestamp)}</div><div className="feed-dot" style={{background:STRATA.find(s=>s.code===e.authority?.stratum)?.color||"#9a8a75"}}/></div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div className="feed-time">{timeSince(e.server_timestamp || e.timestamp)}</div>
+                  <div className="feed-dot" style={{background:STRATA.find(s => s.code === e.authority?.stratum)?.color||"#9a8a75"}}/>
+                </div>
               </div>
             ))}
-            {!ledger.length&&<div className="empty-state">No entries yet.</div>}
+            {!ledger.length && <div className="empty-state">No entries yet.</div>}
           </div>
         </div>
         <div className="grid2">
           <div className="card">
             <div className="card-h">Authority Models</div>
-            {[{name:"Model A — Identity & Institutional",axis:"Stratum 01–08",icon:"◆",color:"#5a4a7a",desc:"Biological identity, constitutional authority, legal procedures"},{name:"Model B — Financial & Monetary",axis:"Tier 1–8",icon:"◈",color:"#3a5a3a",desc:"FDC issuance, monetary governance, GDRI-backed currency"},{name:"Model C — Security & Risk",axis:"Level 1–8",icon:"◉",color:"#7a5a20",desc:"Risk classification, heir protection, access control"}].map(m=>(
+            {[
+              {name:"Model A — Identity & Institutional", axis:"Stratum 01–08", icon:"◆", color:"#5a4a7a", desc:"Biological identity, constitutional authority, legal procedures"},
+              {name:"Model B — Financial & Monetary",     axis:"Tier 1–8",      icon:"◈", color:"#3a5a3a", desc:"FDC issuance, monetary governance, GDRI-backed currency"},
+              {name:"Model C — Security & Risk",          axis:"Level 1–8",     icon:"◉", color:"#7a5a20", desc:"Risk classification, heir protection, access control"},
+            ].map(m => (
               <div key={m.name} style={{display:"flex",gap:12,padding:"10px 0",borderBottom:"1px solid #e0d8cc"}}>
                 <div style={{fontSize:18,color:m.color,flexShrink:0,paddingTop:2}}>{m.icon}</div>
-                <div><div style={{fontSize:14,color:"#2a2218",marginBottom:2}}>{m.name}</div><div style={{fontSize:11,color:"#7a6a55",marginBottom:5}}>{m.desc}</div><span className="badge badge-purple" style={{fontSize:9}}>{m.axis}</span></div>
+                <div>
+                  <div style={{fontSize:14,color:"#2a2218",marginBottom:2}}>{m.name}</div>
+                  <div style={{fontSize:11,color:"#7a6a55",marginBottom:5}}>{m.desc}</div>
+                  <span className="badge badge-purple" style={{fontSize:9}}>{m.axis}</span>
+                </div>
               </div>
             ))}
           </div>
           <div className="card">
             <div className="card-h">GDRI — Global Debt Reduction Index</div>
-            <div style={{marginBottom:12}}><div style={{fontSize:10,color:"#7a6a55",marginBottom:4,letterSpacing:"0.12em",textTransform:"uppercase"}}>Current Balance</div><div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:44,color:"#2a2218",lineHeight:1}}>{(gdri/1000000).toFixed(2)}M <span style={{fontSize:14,color:"#7a6a55"}}>units</span></div></div>
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,color:"#7a6a55",marginBottom:4,letterSpacing:"0.12em",textTransform:"uppercase"}}>Current Balance</div>
+              <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:44,color:"#2a2218",lineHeight:1}}>
+                {(gdri/1000000).toFixed(2)}M <span style={{fontSize:14,color:"#7a6a55"}}>units</span>
+              </div>
+            </div>
             <div className="gdri-bar"><div className="gdri-fill" style={{width:Math.max(5,Math.min(100,(gdri/1000000)*100))+"%"}}/></div>
             <div style={{fontSize:12,color:"#7a6a55",marginTop:8,fontStyle:"italic"}}>Each FDC minted reduces this index by 1 unit.</div>
           </div>
@@ -330,47 +524,113 @@ export default function App() {
     );
   }
 
+  // ── renderLedgerTable ───────────────────────────────────────────────────────
+
   function renderLedgerTable() {
     return (
       <div>
-        <div className="page-header"><h2>Provenance Ledger</h2><p>Immutable · Cryptographically Hashed · Append-Only</p></div>
+        <div className="page-header">
+          <h2>Provenance Ledger</h2>
+          <p>Immutable · SHA-256 Hashed · Append-Only · Authority-Enforced</p>
+        </div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
           <div className="filter-row" style={{marginBottom:0}}>
             <button className={`filter-btn ${filterStratum==="all"?"active":""}`} onClick={()=>setFilterStratum("all")}>All</button>
-            {STRATA.map(s=><button key={s.code} className={`filter-btn ${filterStratum===s.code?"active":""}`} onClick={()=>setFilterStratum(filterStratum===s.code?"all":s.code)}>{s.short}</button>)}
+            {STRATA.map(s => (
+              <button key={s.code} className={`filter-btn ${filterStratum===s.code?"active":""}`} onClick={()=>setFilterStratum(filterStratum===s.code?"all":s.code)}>{s.short}</button>
+            ))}
           </div>
           <div style={{display:"flex",gap:8}}>
             <button className="btn btn-secondary btn-sm" onClick={()=>{setLedger(DEMO);saveLocal(DEMO);}}>Reset Demo</button>
             <button className="btn btn-secondary btn-sm" onClick={()=>{const b=new Blob([JSON.stringify(ledger,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="fiducia_ledger.json";a.click();}}>Export JSON</button>
           </div>
         </div>
-        {mintStatus&&<div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`}>{mintStatus.msg}</div>}
+        {mintStatus && (
+          <div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`}>
+            <div>
+              <div>{mintStatus.msg}</div>
+              {mintStatus.detail && <div style={{fontSize:11,marginTop:4,opacity:0.85}}>{mintStatus.detail}</div>}
+            </div>
+          </div>
+        )}
         <div style={{background:"#f7f4ee",border:"1px solid #c8bfaa"}}>
           <table className="ledger-tbl">
-            <thead><tr><th>Entry ID</th><th>Timestamp</th><th>Action</th><th>Asset / Subject</th><th>Authority</th><th>Hash</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Entry ID</th>
+                <th>Timestamp</th>
+                <th>Action</th>
+                <th>Asset / Subject</th>
+                <th>Authority</th>
+                <th>Hash (SHA-256)</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
-              {!filteredLedger.length&&<tr><td colSpan={7} style={{textAlign:"center",padding:32,color:"#9a8a75",fontStyle:"italic"}}>No entries match this filter.</td></tr>}
-              {filteredLedger.map(e=>(
+              {!filteredLedger.length && (
+                <tr><td colSpan={8} style={{textAlign:"center",padding:32,color:"#9a8a75",fontStyle:"italic"}}>No entries match this filter.</td></tr>
+              )}
+              {filteredLedger.map(e => (
                 <>
-                  <tr key={e.id} style={{cursor:"pointer"}} onClick={()=>setSelectedEntry(selectedEntry?.id===e.id?null:e)}>
-                    <td><span style={{fontFamily:"'Courier New',monospace",fontSize:10,color:"#5a4a7a"}}>{e.id.slice(0,22)}…</span></td>
-                    <td style={{fontSize:11,color:"#7a6a55",whiteSpace:"nowrap"}}>{new Date(e.timestamp).toLocaleString()}</td>
+                  <tr key={e.id} style={{cursor:"pointer",opacity:e._rejected?0.7:1}} onClick={()=>setSelectedEntry(selectedEntry?.id===e.id?null:e)}>
+                    <td style={{fontSize:10,color:"#9a8a75",fontFamily:"'Courier New',monospace"}}>{e.sequence ?? "—"}</td>
+                    <td><span style={{fontFamily:"'Courier New',monospace",fontSize:10,color:"#5a4a7a"}}>{e.id.slice(0,20)}…</span></td>
+                    <td style={{fontSize:11,color:"#7a6a55",whiteSpace:"nowrap"}}>{new Date(e.server_timestamp||e.timestamp).toLocaleString()}</td>
                     <td><span className="badge badge-purple" style={{fontSize:9}}>{e.action?.token}</span></td>
                     <td style={{maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.asset?.label}>{e.asset?.label}</td>
-                    <td>{renderAuthority(e.authority)}</td>
-                    <td><span style={{fontFamily:"'Courier New',monospace",fontSize:9,color:"#9a8a75"}}>{truncHash(e.legal?.doc_hash)}</span></td>
-                    <td><div style={{display:"flex",gap:6}}><button className="btn btn-secondary btn-sm" onClick={ev=>{ev.stopPropagation();setCertEntry(e);setTab("certificates");}}>Cert</button>{e._local&&<span className="badge badge-amber" style={{fontSize:8}}>local</span>}</div></td>
-                  </tr>
-                  {selectedEntry?.id===e.id&&(
-                    <tr key={e.id+"-d"}><td colSpan={7} style={{padding:"0 12px 16px"}}>
-                      <div className="entry-detail">
-                        <div className="detail-grid">
-                          {[["Issuer",e.parties?.issuer],["To",e.parties?.to||"—"],["Stratum",e.action?.stratum],["Instrument",e.instrument?.type+(e.instrument?.unit?" · "+e.instrument.unit:"")],["Amount",e.instrument?.amount?.toLocaleString()||"—"],["Jurisdiction",e.legal?.jurisdiction],["Notes",e.metadata?.notes||"—"],["Reason",e.action?.reason]].map(([k,v])=>(
-                            <div className="detail-row" key={k}><div className="detail-label">{k}</div><div className="detail-val">{v}</div></div>
-                          ))}
-                        </div>
+                    <td>{renderAuthority(e)}</td>
+                    <td>
+                      {isRealHash(e.entry_hash)
+                        ? <span style={{fontFamily:"'Courier New',monospace",fontSize:9,color:"#3a5a3a"}} title={e.entry_hash}>sha256:{e.entry_hash!.slice(0,10)}…</span>
+                        : <span style={{fontFamily:"'Courier New',monospace",fontSize:9,color:"#9a8a75"}} title={e.legal?.doc_hash}>{truncHash(e.legal?.doc_hash)}</span>
+                      }
+                    </td>
+                    <td>
+                      <div style={{display:"flex",gap:6}}>
+                        <button className="btn btn-secondary btn-sm" onClick={ev=>{ev.stopPropagation();setCertEntry(e);setTab("certificates");}}>Cert</button>
                       </div>
-                    </td></tr>
+                    </td>
+                  </tr>
+                  {selectedEntry?.id === e.id && (
+                    <tr key={e.id+"-d"}>
+                      <td colSpan={8} style={{padding:"0 12px 16px"}}>
+                        <div className="entry-detail">
+                          <div className="detail-grid">
+                            {[
+                              ["Issuer",      e.parties?.issuer],
+                              ["To",          e.parties?.to||"—"],
+                              ["Stratum",     e.action?.stratum],
+                              ["Instrument",  e.instrument?.type+(e.instrument?.unit?" · "+e.instrument.unit:"")],
+                              ["Amount",      e.instrument?.amount?.toLocaleString()||"—"],
+                              ["Jurisdiction",e.legal?.jurisdiction],
+                              ["Notes",       e.metadata?.notes||"—"],
+                              ["Reason",      e.action?.reason],
+                            ].map(([k,v]) => (
+                              <div className="detail-row" key={k}><div className="detail-label">{k}</div><div className="detail-val">{v}</div></div>
+                            ))}
+                          </div>
+                          {/* Chain integrity block — only shown for server-verified entries */}
+                          {(e.entry_hash || e.prev_entry_hash) && (
+                            <div style={{marginTop:12}}>
+                              <div className="detail-label" style={{marginBottom:6}}>Cryptographic Chain</div>
+                              <div className="chain-block">
+                                <div>entry_hash:      {e.entry_hash || "pending"}</div>
+                                <div>prev_entry_hash: {e.prev_entry_hash || "—"}</div>
+                                <div>doc_hash:        {e.legal?.doc_hash || "—"}</div>
+                                <div>sequence:        {e.sequence ?? "—"}</div>
+                                <div>authority_model: {e.authority_model_version || "—"}</div>
+                              </div>
+                            </div>
+                          )}
+                          {e._rejected && (
+                            <div className="authority-warning" style={{marginTop:10}}>
+                              Authority Enforcement Rejected: {e._reject_reason}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
                   )}
                 </>
               ))}
@@ -381,29 +641,87 @@ export default function App() {
     );
   }
 
+  // ── renderMintForm ──────────────────────────────────────────────────────────
+
   function renderMintForm() {
+    const actionOk = clientCanPerform(mintForm.stratum, mintForm.action_token);
     return (
       <div>
-        <div className="page-header"><h2>Register Entry</h2><p>Mint a new immutable block to the provenance ledger</p></div>
-        {mintStatus&&<div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`} style={{marginBottom:16}}>{loading&&<div className="spinner"/>}{mintStatus.msg}</div>}
+        <div className="page-header">
+          <h2>Register Entry</h2>
+          <p>Stratum-07 Authority Enforcement · SHA-256 Sealed · Append-Only</p>
+        </div>
+        {mintStatus && (
+          <div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`} style={{marginBottom:16}}>
+            {loading && <div className="spinner"/>}
+            <div>
+              <div>{mintStatus.msg}</div>
+              {mintStatus.detail && <div style={{fontSize:11,marginTop:4,opacity:0.85}}>{mintStatus.detail}</div>}
+            </div>
+          </div>
+        )}
         <div className="grid2">
           <div className="card">
             <div className="section-title">Entry Details</div>
+            {/* API Token input — required to persist to live ledger */}
+            <div className="form-row single" style={{marginBottom:14}}>
+              <div className="fld">
+                <label>FIDUCIA_SYS_TOKEN (required to write to live ledger)</label>
+                <input
+                  type="password"
+                  placeholder="Leave blank to save locally only"
+                  value={mintToken}
+                  onChange={e => setMintToken(e.target.value)}
+                />
+              </div>
+            </div>
             <form onSubmit={handleMint}>
               <div className="form-row">
-                <div className="fld"><label>Action Token</label><select value={mintForm.action_token} onChange={e=>handleMintChange("action_token",e.target.value)}>{Object.entries(ACTION_TOKENS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select></div>
-                <div className="fld"><label>Stratum</label><select value={mintForm.stratum} onChange={e=>handleMintChange("stratum",e.target.value)}>{STRATA.map(s=><option key={s.code} value={s.code}>{s.short} — {s.name}</option>)}</select></div>
+                <div className="fld">
+                  <label>Action Token</label>
+                  <select value={mintForm.action_token} onChange={e=>handleMintChange("action_token",e.target.value)}>
+                    {Object.entries(ACTION_TOKENS).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+                  </select>
+                </div>
+                <div className="fld">
+                  <label>Stratum</label>
+                  <select value={mintForm.stratum} onChange={e=>handleMintChange("stratum",e.target.value)}>
+                    {STRATA.map(s => <option key={s.code} value={s.code}>{s.short} — {s.name}</option>)}
+                  </select>
+                </div>
               </div>
-              <div className="form-row single"><div className="fld"><label>Asset / Subject Label</label><input value={mintForm.asset_label} onChange={e=>handleMintChange("asset_label",e.target.value)} placeholder="e.g. Certificate of Provenance — Document 001"/></div></div>
+              {/* Authority preflight warning */}
+              {!actionOk && (
+                <div className="authority-warning">
+                  Authority conflict: <strong>{mintForm.stratum}</strong> is not permitted to perform <strong>{mintForm.action_token}</strong>.
+                  {" "}The server will reject this entry. Change the stratum or action token.
+                </div>
+              )}
+              <div className="form-row single">
+                <div className="fld">
+                  <label>Asset / Subject Label</label>
+                  <input value={mintForm.asset_label} onChange={e=>handleMintChange("asset_label",e.target.value)} placeholder="e.g. Certificate of Provenance — Document 001"/>
+                </div>
+              </div>
               <div className="form-row">
-                <div className="fld"><label>Asset Type</label><select value={mintForm.asset_type} onChange={e=>handleMintChange("asset_type",e.target.value)}>{INSTRUMENTS.map(i=><option key={i} value={i}>{i}</option>)}</select></div>
-                <div className="fld"><label>Jurisdiction</label><select value={mintForm.jurisdiction} onChange={e=>handleMintChange("jurisdiction",e.target.value)}>{["ON-CHAIN","WA-KING-COUNTY","US-FEDERAL","BIOLOGICAL","INTERNATIONAL"].map(j=><option key={j} value={j}>{j}</option>)}</select></div>
+                <div className="fld">
+                  <label>Asset Type</label>
+                  <select value={mintForm.asset_type} onChange={e=>handleMintChange("asset_type",e.target.value)}>
+                    {INSTRUMENTS.map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </div>
+                <div className="fld">
+                  <label>Jurisdiction</label>
+                  <select value={mintForm.jurisdiction} onChange={e=>handleMintChange("jurisdiction",e.target.value)}>
+                    {["ON-CHAIN","WA-KING-COUNTY","US-FEDERAL","BIOLOGICAL","INTERNATIONAL"].map(j => <option key={j} value={j}>{j}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="form-row">
                 <div className="fld"><label>Issuer</label><input value={mintForm.issuer} onChange={e=>handleMintChange("issuer",e.target.value)} placeholder="Fiducia Centrale"/></div>
                 <div className="fld"><label>To / Recipient</label><input value={mintForm.to} onChange={e=>handleMintChange("to",e.target.value)} placeholder="e.g. Shane Jonathan Lozenich"/></div>
               </div>
-              {["MINT_FDC","TRANSFER_FDC","REDEEM_FDC"].includes(mintForm.action_token)&&(
+              {["MINT_FDC","TRANSFER_FDC","REDEEM_FDC","MINT_OBLIGATION"].includes(mintForm.action_token) && (
                 <div className="form-row">
                   <div className="fld"><label>Unit</label><input value={mintForm.instrument_unit} onChange={e=>handleMintChange("instrument_unit",e.target.value)} placeholder="FDC"/></div>
                   <div className="fld"><label>Amount</label><input type="number" value={mintForm.instrument_amount} onChange={e=>handleMintChange("instrument_amount",e.target.value)} placeholder="0"/></div>
@@ -418,15 +736,21 @@ export default function App() {
                 <div className="fld"><label>Financial Tier (1–8)</label><input type="number" min={1} max={8} value={mintForm.tier} onChange={e=>handleMintChange("tier",e.target.value)}/></div>
                 <div className="fld"><label>Security Level (1–8)</label><input type="number" min={1} max={8} value={mintForm.level} onChange={e=>handleMintChange("level",e.target.value)}/></div>
               </div>
-              <button className="btn btn-primary" type="submit" disabled={loading} style={{width:"100%",marginTop:8}}>{loading?"Registering…":"Register Entry to Ledger"}</button>
+              <button className="btn btn-primary" type="submit" disabled={loading} style={{width:"100%",marginTop:8}}>
+                {loading ? "Registering…" : mintToken ? "Register to Live Ledger" : "Save Locally"}
+              </button>
             </form>
           </div>
           <div className="card">
             <div className="section-title">Authority Reference</div>
-            {STRATA.map(s=>(
+            {STRATA.map(s => (
               <div key={s.code} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid #e0d8cc",alignItems:"flex-start"}}>
                 <div style={{width:34,height:20,border:`1px solid ${s.color}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:s.color,flexShrink:0}}>{s.short}</div>
-                <div><div style={{fontSize:13,color:"#2a2218"}}>{s.name}</div><div style={{fontSize:11,color:"#7a6a55"}}>{s.desc}</div></div>
+                <div>
+                  <div style={{fontSize:13,color:"#2a2218"}}>{s.name}</div>
+                  <div style={{fontSize:11,color:"#7a6a55"}}>{s.desc}</div>
+                  <div style={{fontSize:10,color:"#9a8a75",marginTop:3}}>Can: {s.can.join(", ")}</div>
+                </div>
               </div>
             ))}
           </div>
@@ -435,10 +759,16 @@ export default function App() {
     );
   }
 
+  // ── renderCertificates ──────────────────────────────────────────────────────
+
   function renderCertificates() {
-    const entry=certEntry||ledger[0];
-    if(!entry) return <div className="empty-state">No entries to certify.</div>;
-    const certHash="0x"+hashSimulate(entry.id+entry.timestamp+(entry.legal?.doc_hash||""));
+    const entry = certEntry || ledger[0];
+    if (!entry) return <div className="empty-state">No entries to certify.</div>;
+    // Use real entry_hash if available, otherwise simulate
+    const certHash = isRealHash(entry.entry_hash)
+      ? entry.entry_hash!
+      : "0x" + hashSimulate(entry.id + entry.timestamp + (entry.legal?.doc_hash||""));
+    const isVerified = isRealHash(entry.entry_hash);
     return (
       <div>
         <div className="page-header"><h2>Certificate Generator</h2><p>Stratum 05 — Certificatory Authority</p></div>
@@ -446,10 +776,13 @@ export default function App() {
           <div className="card">
             <div className="section-title">Select Entry to Certify</div>
             <div style={{maxHeight:300,overflowY:"auto"}}>
-              {ledger.map(e=>(
+              {ledger.map(e => (
                 <div key={e.id} onClick={()=>setCertEntry(e)} style={{padding:"9px 10px",cursor:"pointer",background:certEntry?.id===e.id?"#e8e2d8":"transparent",borderLeft:certEntry?.id===e.id?"3px solid #2a2218":"3px solid transparent",transition:"all 0.15s",marginBottom:3}}>
-                  <div style={{fontSize:13,color:"#2a2218",marginBottom:2}}>{e.asset?.label||e.id}</div>
-                  <div style={{fontSize:10,color:"#9a8a75"}}>{e.action?.token} · {timeSince(e.timestamp)}</div>
+                  <div style={{fontSize:13,color:"#2a2218",marginBottom:2}}>
+                    {e.asset?.label||e.id}
+                    {e.authority_verified && !e._local && <span style={{color:"#3a5a3a",fontSize:10,marginLeft:6}}>✓</span>}
+                  </div>
+                  <div style={{fontSize:10,color:"#9a8a75"}}>{e.action?.token} · {timeSince(e.server_timestamp||e.timestamp)}</div>
                 </div>
               ))}
             </div>
@@ -461,13 +794,37 @@ export default function App() {
             <div className="cert-rule"/>
             <div className="cert-title">{entry.asset?.label||"Untitled Entry"}</div>
             <div className="cert-subtitle">Certificate of Stratigraphic Provenance</div>
-            <div className="cert-body">This certificate attests, under the Certificatory authority of Fiducia Centrale (Stratum 05), that the entry identified herein has been recorded in the immutable provenance ledger and is cryptographically sealed.</div>
-            {[["Entry ID",entry.id],["Action",entry.action?.token],["Stratum",entry.authority?.stratum],["Financial Tier","Tier "+entry.authority?.tier],["Security Level","Level "+entry.authority?.level],["Issuing Authority",entry.parties?.issuer],["Jurisdiction",entry.legal?.jurisdiction],["Date Issued",new Date(entry.timestamp).toLocaleString()],["Source Hash",truncHash(entry.legal?.doc_hash)]].map(([k,v])=>(
+            <div className="cert-body">
+              This certificate attests, under the Certificatory authority of Fiducia Centrale (Stratum 05), that the entry identified herein has been recorded in the {isVerified ? "immutable, cryptographically sealed provenance ledger and verified by the authority enforcement engine" : "provenance ledger (local — not yet server-verified)"}.
+            </div>
+            {[
+              ["Entry ID",        entry.id],
+              ["Action",          entry.action?.token],
+              ["Stratum",         entry.authority?.stratum],
+              ["Financial Tier",  "Tier "+entry.authority?.tier],
+              ["Security Level",  "Level "+entry.authority?.level],
+              ["Issuing Authority",entry.parties?.issuer],
+              ["Jurisdiction",    entry.legal?.jurisdiction],
+              ["Date Issued",     new Date(entry.server_timestamp||entry.timestamp).toLocaleString()],
+              ["Sequence #",      entry.sequence ? String(entry.sequence) : "—"],
+              ["Authority Verified", isVerified ? "✓ Yes — server-enforced" : "Local only"],
+            ].map(([k,v]) => (
               <div className="cert-field" key={k}><span className="cert-label">{k}</span><span className="cert-val">{v||"—"}</span></div>
             ))}
-            <div className="cert-hash"><div style={{fontSize:9,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:4}}>Certificate Hash</div><div style={{color:"#5a4a7a"}}>{certHash}</div></div>
+            <div className="cert-hash">
+              <div style={{fontSize:9,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:4}}>
+                {isVerified ? "SHA-256 Entry Hash" : "Simulated Hash (local)"}
+              </div>
+              <div style={{color: isVerified ? "#3a5a3a" : "#9a8a75"}}>{certHash}</div>
+              {entry.prev_entry_hash && (
+                <div style={{marginTop:6}}>
+                  <div style={{fontSize:9,letterSpacing:"0.15em",textTransform:"uppercase",marginBottom:2}}>Previous Entry Hash</div>
+                  <div style={{color:"#7a6a55"}}>{entry.prev_entry_hash}</div>
+                </div>
+              )}
+            </div>
             <div style={{marginTop:18,display:"flex",gap:8}}>
-              <button className="btn btn-primary btn-sm" onClick={()=>{const t=`FIDUCIA CENTRALE — CERTIFICATE OF PROVENANCE\n\nEntry: ${entry.asset?.label}\nID: ${entry.id}\nCert Hash: ${certHash}`;navigator.clipboard?.writeText(t).catch(()=>{});}}>Copy Certificate</button>
+              <button className="btn btn-primary btn-sm" onClick={()=>{const t=`FIDUCIA CENTRALE — CERTIFICATE OF PROVENANCE\n\nEntry: ${entry.asset?.label}\nID: ${entry.id}\nSeq: ${entry.sequence??'—'}\nSHA-256: ${certHash}\nAuthority Verified: ${isVerified?'Yes':'Local only'}\nDate: ${new Date(entry.server_timestamp||entry.timestamp).toLocaleString()}`;navigator.clipboard?.writeText(t).catch(()=>{});}}>Copy Certificate</button>
               <button className="btn btn-secondary btn-sm" onClick={()=>window.print()}>Print</button>
             </div>
           </div>
@@ -475,6 +832,8 @@ export default function App() {
       </div>
     );
   }
+
+  // ── renderConnectPanel ──────────────────────────────────────────────────────
 
   function renderConnectPanel() {
     async function handleTest() {
@@ -486,10 +845,13 @@ export default function App() {
         });
         if (r.ok) {
           const data = await r.json();
+          const count = Array.isArray(data) ? data.length : "?";
+          const verified = Array.isArray(data) ? data.filter((e: LedgerEntry) => e.authority_verified).length : 0;
           setConnectOk(true);
-          setConnectMsg("Connected. " + (Array.isArray(data) ? data.length : "?") + " entries on remote ledger.");
+          setConnectMsg(`Connected. ${count} entries on remote ledger (${verified} server-verified).`);
         } else {
-          setConnectMsg("API returned status " + r.status + ". Check your token or deployment.");
+          const data = await r.json().catch(()=>({}));
+          setConnectMsg("API returned status " + r.status + ". " + (data.error || "Check your token or deployment."));
         }
       } catch {
         setConnectMsg("Could not reach API. Check that your Vercel deployment is live.");
@@ -499,14 +861,18 @@ export default function App() {
     async function handlePull() {
       setConnectMsg("Pulling…"); setConnectOk(false);
       try {
-        const r = await fetch(VERCEL_URL + "/api/ledger", { signal: AbortSignal.timeout(6000) });
+        const r = await fetch(VERCEL_URL + "/api/ledger", { signal: AbortSignal.timeout(8000) });
         if (!r.ok) throw new Error("Status " + r.status);
         const data = await r.json();
         if (Array.isArray(data) && data.length > 0) {
-          const merged = [...data, ...ledger.filter(e => e._local)];
-          setLedger(merged); saveLocal(merged);
+          // Merge: remote entries take precedence over local copies of same ID
+          const remoteIds = new Set(data.map((e: LedgerEntry) => e.id));
+          const localOnly = ledger.filter(e => !remoteIds.has(e.id));
+          const merged = [...data, ...localOnly];
+          setLedger(merged);
+          saveLocal(merged);
           setConnectOk(true);
-          setConnectMsg("Pulled " + data.length + " entries from Vercel and merged with local data.");
+          setConnectMsg(`Pulled ${data.length} entries from server. ${localOnly.length} local-only entries retained.`);
         } else {
           setConnectMsg("Remote ledger is empty. Local entries intact.");
         }
@@ -520,27 +886,28 @@ export default function App() {
       {done:true,  label:"Vercel project created"},
       {done:true,  label:"Upstash Redis connected in Vercel dashboard"},
       {done:true,  label:"FIDUCIA_SYS_TOKEN set in Vercel environment variables"},
-      {done:false, label:"Copy app/api/ledger/route.ts from the code artifact"},
-      {done:false, label:"Copy app/api/mint/route.ts from the code artifact"},
-      {done:false, label:"app/page.tsx replaced with dashboard code"},
-      {done:false, label:"'use client' added to top of page.tsx"},
-      {done:false, label:"Google Fonts link moved to app/layout.tsx"},
+      {done:false, label:"Copy app/api/ledger/route.ts into your repo"},
+      {done:false, label:"Copy app/api/mint/route.ts into your repo"},
+      {done:false, label:"Copy lib/authority.ts into your repo"},
+      {done:false, label:"Replace app/page.tsx with this file"},
+      {done:false, label:"Verify 'use client' is at top of page.tsx"},
       {done:false, label:"git push — Vercel auto-deploys"},
       {done:false, label:"Test Connection below returns green"},
+      {done:false, label:"Mint a test entry with your FIDUCIA_SYS_TOKEN — verify SHA-256 hash appears"},
     ];
 
     return (
       <div>
-        <div className="page-header"><h2>Backend Connection</h2><p>Vercel · Upstash Redis · Deployment Checklist</p></div>
+        <div className="page-header"><h2>Backend Connection</h2><p>Vercel · Upstash Redis · Authority Enforcement</p></div>
         <div className="grid2">
           <div className="card">
             <div className="section-title">Test Your Live API</div>
             <div className="fld" style={{marginBottom:12}}>
               <label>Vercel API URL</label>
-              <input value={process.env.NEXT_PUBLIC_API_URL || "https://ledger.fiduciacentrale.com/api/ledger"} readOnly style={{opacity:0.7,fontFamily:"'Courier New',monospace",fontSize:12}}/>
+              <input value={VERCEL_URL} readOnly style={{opacity:0.7,fontFamily:"'Courier New',monospace",fontSize:12}}/>
             </div>
             <div className="fld" style={{marginBottom:14}}>
-              <label>FIDUCIA_SYS_TOKEN</label>
+              <label>FIDUCIA_SYS_TOKEN (optional for read test)</label>
               <input type="password" placeholder="Paste your token here" value={connectToken} onChange={e=>setConnectToken(e.target.value)}/>
             </div>
             {connectMsg && (
@@ -550,16 +917,12 @@ export default function App() {
             )}
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button className="btn btn-primary btn-sm" onClick={handleTest}>Test Connection</button>
-              <button className="btn btn-secondary btn-sm" onClick={handlePull}>⟳ Pull from Vercel</button>
-              <button className="btn btn-secondary btn-sm" onClick={()=>{
-                const b=new Blob([JSON.stringify(ledger,null,2)],{type:"application/json"});
-                const a=document.createElement("a");a.href=URL.createObjectURL(b);
-                a.download="fiducia_ledger_export.json";a.click();
-              }}>Export JSON</button>
+              <button className="btn btn-secondary btn-sm" onClick={handlePull}>⟳ Pull from Server</button>
+              <button className="btn btn-secondary btn-sm" onClick={()=>{const b=new Blob([JSON.stringify(ledger,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="fiducia_ledger_export.json";a.click();}}>Export JSON</button>
             </div>
             <div className="sep"/>
             <div className="section-title">Deployment Checklist</div>
-            {steps.map((s,i)=>(
+            {steps.map((s,i) => (
               <div className="checklist-item" key={i}>
                 <span style={{color:s.done?"#3a5a3a":"#9a8a75",fontSize:15,flexShrink:0}}>{s.done?"✓":"○"}</span>
                 <span style={{color:s.done?"#2a2218":"#7a6a55"}}>{s.label}</span>
@@ -567,25 +930,26 @@ export default function App() {
             ))}
           </div>
           <div className="card">
-            <div className="section-title">Why This Setup Works</div>
+            <div className="section-title">What This Setup Enforces</div>
             <div style={{fontSize:13,color:"#5a4a35",lineHeight:1.9,marginBottom:14}}>
-              The two route files (ledger and mint) use plain fetch() to talk to Upstash over HTTP — no npm packages required. They read your three environment variables directly from Vercel&apos;s secure runtime.
+              The three route files use plain fetch() to talk to Upstash over HTTP — no npm packages required. Authority is enforced server-side on every write.
             </div>
-            <div style={{fontSize:12,color:"#7a6a55",lineHeight:1.8,marginBottom:8}}>Your three required environment variables:</div>
-            {["UPSTASH_REDIS_REST_URL","UPSTASH_REDIS_REST_TOKEN","FIDUCIA_SYS_TOKEN"].map(v=>(
-              <div key={v} style={{fontFamily:"'Courier New',monospace",fontSize:11,padding:"6px 10px",background:"#f0ece4",border:"1px solid #c8bfaa",marginBottom:6,color:"#2a2218"}}>{v}</div>
+            <div className="section-title" style={{marginTop:8}}>Three Enforcement Guarantees</div>
+            {[
+              {icon:"🔐", label:"Authentication",      desc:"Every write requires X-Fiducia-Token matching FIDUCIA_SYS_TOKEN"},
+              {icon:"⚖️", label:"Authority Enforcement",desc:"lib/authority.ts defines which strata can perform which actions. The server rejects violations."},
+              {icon:"🔒", label:"Append-Only Immutability",desc:"Entry IDs are tracked in a Redis SET. Duplicate IDs are rejected with a 409 error."},
+              {icon:"#️⃣", label:"Real SHA-256 Hashing",   desc:"server generates SHA-256 of entry content. Each entry records the previous entry's hash, forming a chain."},
+            ].map(r => (
+              <div key={r.label} style={{padding:"8px 0",borderBottom:"1px solid #e0d8cc"}}>
+                <div style={{fontSize:13,color:"#2a2218",marginBottom:2}}>{r.icon} {r.label}</div>
+                <div style={{fontSize:12,color:"#7a6a55"}}>{r.desc}</div>
+              </div>
             ))}
             <div className="sep"/>
-            <div className="section-title">Where to Find Each Value</div>
-            {[
-              {k:"UPSTASH_REDIS_REST_URL",v:"Upstash dashboard → your database → REST API tab"},
-              {k:"UPSTASH_REDIS_REST_TOKEN",v:"Upstash dashboard → your database → REST API tab"},
-              {k:"FIDUCIA_SYS_TOKEN",v:"Make up any long random string — this is your private mint password"},
-            ].map(r=>(
-              <div key={r.k} style={{padding:"8px 0",borderBottom:"1px solid #e0d8cc"}}>
-                <div style={{fontFamily:"'Courier New',monospace",fontSize:11,color:"#5a4a7a",marginBottom:3}}>{r.k}</div>
-                <div style={{fontSize:12,color:"#7a6a55"}}>{r.v}</div>
-              </div>
+            <div className="section-title">Required Environment Variables</div>
+            {["UPSTASH_REDIS_REST_URL","UPSTASH_REDIS_REST_TOKEN","FIDUCIA_SYS_TOKEN"].map(v => (
+              <div key={v} style={{fontFamily:"'Courier New',monospace",fontSize:11,padding:"6px 10px",background:"#f0ece4",border:"1px solid #c8bfaa",marginBottom:6,color:"#2a2218"}}>{v}</div>
             ))}
           </div>
         </div>
@@ -593,7 +957,15 @@ export default function App() {
     );
   }
 
-  const TABS=[{id:"overview",label:"Overview"},{id:"ledger",label:"Ledger S06"},{id:"mint",label:"Register S07"},{id:"certificates",label:"Certificates S05"},{id:"connect",label:"Connect"}];
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  const TABS = [
+    {id:"overview",     label:"Overview"},
+    {id:"ledger",       label:"Ledger S06"},
+    {id:"mint",         label:"Register S07"},
+    {id:"certificates", label:"Certificates S05"},
+    {id:"connect",      label:"Connect"},
+  ];
 
   return (
     <>
@@ -609,13 +981,17 @@ export default function App() {
             <div className="hdr-entity-sub"><span className="status-dot"/>Fiducia Centrale / Central Trust Securities</div>
           </div>
         </header>
-        <nav className="nav"><div className="tabs">{TABS.map(t=><button key={t.id} className={`tab ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)}>{t.label}</button>)}</div></nav>
+        <nav className="nav">
+          <div className="tabs">
+            {TABS.map(t => <button key={t.id} className={`tab ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)}>{t.label}</button>)}
+          </div>
+        </nav>
         <div className="content">
-          {tab==="overview"&&renderOverview()}
-          {tab==="ledger"&&renderLedgerTable()}
-          {tab==="mint"&&renderMintForm()}
-          {tab==="certificates"&&renderCertificates()}
-          {tab==="connect"&&renderConnectPanel()}
+          {tab==="overview"     && renderOverview()}
+          {tab==="ledger"       && renderLedgerTable()}
+          {tab==="mint"         && renderMintForm()}
+          {tab==="certificates" && renderCertificates()}
+          {tab==="connect"      && renderConnectPanel()}
         </div>
       </div>
     </>
