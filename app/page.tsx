@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
 function fhash(str: string): string {
@@ -80,6 +80,8 @@ const AUTHORITY_RULES: Record<string, { required_tier: number; required_level: n
   "APPROVE_CREDIT":          { required_tier: 4, required_level: 3, required_strata: ["04-Administrative"] },
   "REGISTER_AUTHORITY_MODEL":{ required_tier: 7, required_level: 4, required_strata: ["02-Constitutional"] },
 };
+
+const CONSTITUTION_TOKENS = ["DEFINE_CONSTITUTION", "INTERPRET_CONSTITUTION"];
 
 const LOCAL_KEY = "fc_ledger_v5";
 function loadLocal(): LedgerEntry[] { try { const d=localStorage.getItem(LOCAL_KEY); return d?JSON.parse(d):[]; } catch{return[];} }
@@ -343,7 +345,11 @@ export default function App() {
   }
 
   const filteredLedger = ledger
-    .filter(e => filterStratum === "all" || e.authority?.stratum === filterStratum)
+    .filter(e => {
+      if (filterStratum === "all") return true;
+      if (filterStratum === "constitution") return CONSTITUTION_TOKENS.includes(e.action?.token);
+      return e.authority?.stratum === filterStratum;
+    })
     .filter(e => {
       if (!searchQuery) return true;
       const q = searchQuery.toLowerCase();
@@ -452,6 +458,7 @@ export default function App() {
           <div className="filter-row" style={{marginBottom:0,justifyContent:"flex-end"}}>
             <button className={`filter-btn ${filterStratum==="all"?"active":""}`} onClick={()=>setFilterStratum("all")}>All</button>
             {STRATA.map(s=><button key={s.code} className={`filter-btn ${filterStratum===s.code?"active":""}`} onClick={()=>setFilterStratum(filterStratum===s.code?"all":s.code)}>{s.short}</button>)}
+            <button className={`filter-btn ${filterStratum==="constitution"?"active":""}`} onClick={()=>setFilterStratum(filterStratum==="constitution"?"all":"constitution")} style={{borderColor:"#7a6a9a"}}>Constitution</button>
           </div>
         </div>
         {mintStatus && <div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`}>{mintStatus.msg}</div>}
@@ -465,6 +472,14 @@ export default function App() {
             </thead>
             <tbody>
               {!filteredLedger.length && <tr><td colSpan={8} style={{textAlign:"center",padding:28,color:"#9a8a75",fontStyle:"italic"}}>No entries match this filter or search.</td></tr>}
+              {filterStratum === "constitution" && filteredLedger.length > 0 && (
+                <tr><td colSpan={8} style={{padding:"12px 14px",background:"#f0ecf7",borderBottom:"2px solid #2a2218"}}>
+                  <div style={{fontSize:11,letterSpacing:"0.15em",textTransform:"uppercase",color:"#5a4a7a",marginBottom:6}}>Constitutional Record — {filteredLedger.length} Article{filteredLedger.length!==1?"s":""}</div>
+                  <div style={{fontSize:12,color:"#5a4a35",lineHeight:1.7}}>
+                    These entries define or interpret the Fiducia Centrale constitutional framework under Stratum 02. Each entry below represents either a foundational definition (DEFINE_CONSTITUTION) or a binding interpretation (INTERPRET_CONSTITUTION) of existing constitutional text.
+                  </div>
+                </td></tr>
+              )}
               {filteredLedger.map(e=>{
                 const authCheck = enforceAuthority(e.action?.token, e.authority?.tier, e.authority?.level, e.authority?.stratum);
                 return (
@@ -801,10 +816,11 @@ export default function App() {
               {done:true,  label:"Vercel project created"},
               {done:true,  label:"Upstash Redis connected in Vercel dashboard"},
               {done:true,  label:"FIDUCIA_SYS_TOKEN set in Vercel environment variables"},
-              {done:false, label:"Copy app/api/ledger/route.ts from code artifact"},
-              {done:false, label:"Copy app/api/mint/route.ts from code artifact"},
-              {done:false, label:"'use client' added to top of page.tsx"},
-              {done:false, label:"Google Fonts moved to app/layout.tsx"},
+              {done:true,  label:"app/api/ledger/route.ts persists upstream_refs"},
+              {done:true,  label:"'use client' added to top of page.tsx"},
+              {done:true,  label:"Google Fonts moved to app/layout.tsx"},
+              {done:true,  label:"Constitution view filter added to Ledger tab"},
+              {done:false, label:"CLR-AG-2026-009 registered as S01 identity entry"},
               {done:false, label:"git push — Vercel auto-deploys"},
               {done:false, label:"Test Connection below returns green"},
             ].map((s,i)=>(
@@ -868,7 +884,6 @@ export default function App() {
             </div>
           )}
           <div style={{marginTop:14,display:"flex",gap:8}}>
-
             <button className="btn btn-secondary btn-sm" onClick={()=>{navigator.clipboard?.writeText(JSON.stringify(e,null,2)).catch(()=>{});}}>Copy JSON</button>
             <button className="btn btn-secondary btn-sm" onClick={()=>{setCertEntry(e);setDetailModal(null);setTab("certificates");}}>Generate Certificate</button>
           </div>
