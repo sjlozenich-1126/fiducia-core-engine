@@ -237,6 +237,7 @@ export async function POST(req: NextRequest) {
   const entry: Record<string, unknown> = {
     ...body,
     legal,
+    upstream_refs: body.upstream_refs ?? [], // <-- ADD THIS LINE HERE
     // Server-authoritative fields — these override anything the client sent
     server_timestamp: new Date().toISOString(),
     sequence,
