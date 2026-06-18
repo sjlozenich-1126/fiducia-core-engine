@@ -851,7 +851,7 @@ export default function App() {
               <input type="password" placeholder="Paste your token here" value={connectToken} onChange={e=>handleTokenChange(e.target.value)}/>
             </div>
             {connectMsg && <div className={`alert ${connectOk?"alert-green":"alert-red"}`} style={{marginBottom:10}}>{connectMsg}</div>}
-            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
               <button className="btn btn-primary btn-sm" onClick={handleTest}>Test Connection</button>
               <button className="btn btn-secondary btn-sm" onClick={handlePull}>⟳ Pull from Vercel</button>
               <button className="btn btn-secondary btn-sm" onClick={()=>{const b=new Blob([JSON.stringify(ledger,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="fiducia_ledger_export.json";a.click();}}>Export JSON</button>
