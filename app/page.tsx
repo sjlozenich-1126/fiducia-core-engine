@@ -31,7 +31,7 @@ interface LedgerEntry {
   authority: { stratum: string; tier: number; level: number; };
   policy: { gdr_index_delta: number|null; };
   metadata: { tags: string[]; notes: string; version: string; };
-  chain_hash?: string; prev_hash?: string; _local?: boolean;
+  chain_hash?: string; prev_hash?: string; _local?: boolean; _synced?: boolean;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -84,8 +84,11 @@ const AUTHORITY_RULES: Record<string, { required_tier: number; required_level: n
 const CONSTITUTION_TOKENS = ["DEFINE_CONSTITUTION", "INTERPRET_CONSTITUTION"];
 
 const LOCAL_KEY = "fc_ledger_v5";
+const TOKEN_KEY = "fc_sys_token_v1";
 function loadLocal(): LedgerEntry[] { try { const d=localStorage.getItem(LOCAL_KEY); return d?JSON.parse(d):[]; } catch{return[];} }
 function saveLocal(e: LedgerEntry[]) { try{localStorage.setItem(LOCAL_KEY,JSON.stringify(e));}catch{} }
+function loadToken(): string { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; } }
+function saveToken(t: string) { try { localStorage.setItem(TOKEN_KEY, t); } catch {} }
 
 // ─── Demo Seed ────────────────────────────────────────────────────────────────
 const DEMO: LedgerEntry[] = [
@@ -282,6 +285,7 @@ export default function App() {
     setFdc(data.filter(e=>e.action?.token==="MINT_FDC").reduce((s,e)=>s+(e.instrument?.amount||0),0));
     setGdri(1000000 + data.reduce((s,e)=>s+(e.policy?.gdr_index_delta||0),0));
     setChainStatus(verifyChain(data));
+    setConnectToken(loadToken());
   }, []);
 
   function handleMintChange(k: string, v: string|number) {
@@ -326,13 +330,43 @@ export default function App() {
       };
       entry.chain_hash = chainHash(entry, prevHash);
       entry.prev_hash = prevHash;
+
+      // Attempt to sync to live Upstash-backed ledger first
+      let syncMsg = "";
+      let synced = false;
+      if (connectToken) {
+        try {
+          const r = await fetch("https://ledger.fiduciacentrale.com/api/ledger", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Fiducia-Token": connectToken,
+            },
+            body: JSON.stringify(entry),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) {
+            synced = true;
+            syncMsg = " — synced to remote ledger.";
+          } else {
+            const errBody = await r.text().catch(()=> "");
+            syncMsg = ` — remote sync failed (status ${r.status}${errBody ? ": " + errBody.slice(0,120) : ""}). Saved locally only.`;
+          }
+        } catch (syncErr: unknown) {
+          syncMsg = ` — could not reach remote API (${syncErr instanceof Error ? syncErr.message : "network error"}). Saved locally only.`;
+        }
+      } else {
+        syncMsg = " — no FIDUCIA_SYS_TOKEN set in Connect tab, saved locally only.";
+      }
+      entry._synced = synced;
+
       const nl = [entry, ...ledger];
       setLedger(nl); saveLocal(nl);
       if (entry.action.token === "MINT_FDC") setFdc(f=>f+(entry.instrument.amount||0));
       const delta = entry.policy?.gdr_index_delta ?? 0;
       if (delta !== 0) setGdri(g=>g+delta);
       setChainStatus(verifyChain(nl));
-      setMintStatus({ok:true, msg:`Entry registered. Chain hash: ${entry.chain_hash}`, id:entry.id});
+      setMintStatus({ok:true, msg:`Entry registered. Chain hash: ${entry.chain_hash}${syncMsg}`, id:entry.id});
       setMintForm(f=>({...f,asset_label:"",reason:"",notes:"",tags:"",to:"",instrument_amount:"",upstream_refs:""}));
     } catch(err: unknown) { setMintStatus({ok:false, msg:"Registration failed: "+(err instanceof Error?err.message:String(err))}); }
     finally { setLoading(false); }
@@ -361,7 +395,7 @@ export default function App() {
     const counts = STRATA.map(s=>({...s, count:ledger.filter(e=>e.authority?.stratum===s.code).length}));
     const total = ledger.length;
     const verifiedPct = total > 0 ? Math.round((ledger.filter(e=>e.action?.token).length/total)*100) : 0;
-    const localCount = ledger.filter(e=>e._local).length;
+    const localCount = ledger.filter(e=>e._local && !e._synced).length;
     return (
       <div>
         <div className="page-header">
@@ -369,7 +403,7 @@ export default function App() {
           <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
             <span className={`badge ${chainStatus.valid?"badge-valid":"badge-invalid"}`}>{chainStatus.valid?"● Chain Intact":"⚠ Chain Break"}</span>
             <span className="badge badge-green">● Ledger Active</span>
-            {localCount > 0 && <span className="badge badge-amber">◌ {localCount} Local</span>}
+            {localCount > 0 && <span className="badge badge-amber">◌ {localCount} Local Only</span>}
           </div>
         </div>
         <div className="grid4">
@@ -496,7 +530,8 @@ export default function App() {
                         <div style={{display:"flex",gap:5}}>
                           <button className="btn btn-secondary btn-sm" onClick={ev=>{ev.stopPropagation();setDetailModal(e);}}>View</button>
                           <button className="btn btn-secondary btn-sm" onClick={ev=>{ev.stopPropagation();setCertEntry(e);setTab("certificates");}}>Cert</button>
-                          {e._local && <span className="badge badge-amber" style={{fontSize:7}}>local</span>}
+                          {e._synced && <span className="badge badge-green" style={{fontSize:7}}>synced</span>}
+                          {e._local && !e._synced && <span className="badge badge-amber" style={{fontSize:7}}>local</span>}
                         </div>
                       </td>
                     </tr>
@@ -537,6 +572,11 @@ export default function App() {
     return (
       <div>
         <div className="page-header"><div><h2>Register Entry</h2><p>Stratum 07 — Mint a new immutable block to the provenance ledger</p></div></div>
+        {!connectToken && (
+          <div className="alert alert-amber" style={{marginBottom:14}}>
+            No FIDUCIA_SYS_TOKEN set — go to the Connect tab and enter your token first, or entries will only save to this browser.
+          </div>
+        )}
         {mintStatus && (
           <div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`} style={{marginBottom:14}}>
             {loading && <div className="spinner"/>}
@@ -783,12 +823,18 @@ export default function App() {
         if (!r.ok) throw new Error("Status " + r.status);
         const data = await r.json();
         if (Array.isArray(data) && data.length > 0) {
-          const merged = [...data, ...ledger.filter(e => e._local)];
+          const remoteWithFlag = data.map((d: LedgerEntry) => ({...d, _synced: true, _local: false}));
+          const localOnly = ledger.filter(e => e._local && !e._synced);
+          const merged = [...remoteWithFlag, ...localOnly];
           setLedger(merged); saveLocal(merged);
           setConnectOk(true);
           setConnectMsg("Pulled " + data.length + " entries from Vercel and merged with local.");
         } else { setConnectMsg("Remote ledger empty. Local entries intact."); }
       } catch(err: unknown) { setConnectMsg("Pull failed: "+(err instanceof Error?err.message:String(err))); }
+    }
+    function handleTokenChange(v: string) {
+      setConnectToken(v);
+      saveToken(v);
     }
     return (
       <div>
@@ -802,10 +848,10 @@ export default function App() {
             </div>
             <div className="fld" style={{marginBottom:12}}>
               <label>FIDUCIA_SYS_TOKEN</label>
-              <input type="password" placeholder="Paste your token here" value={connectToken} onChange={e=>setConnectToken(e.target.value)}/>
+              <input type="password" placeholder="Paste your token here" value={connectToken} onChange={e=>handleTokenChange(e.target.value)}/>
             </div>
             {connectMsg && <div className={`alert ${connectOk?"alert-green":"alert-red"}`} style={{marginBottom:10}}>{connectMsg}</div>}
-            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}
               <button className="btn btn-primary btn-sm" onClick={handleTest}>Test Connection</button>
               <button className="btn btn-secondary btn-sm" onClick={handlePull}>⟳ Pull from Vercel</button>
               <button className="btn btn-secondary btn-sm" onClick={()=>{const b=new Blob([JSON.stringify(ledger,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="fiducia_ledger_export.json";a.click();}}>Export JSON</button>
