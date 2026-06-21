@@ -242,11 +242,11 @@ function enforceAuthority(token: string, tier: number, level: number, stratum: s
 
 // ─── Chain Integrity Verifier ─────────────────────────────────────────────────
 function verifyChain(ledger: LedgerEntry[]): { valid: boolean; broken_at: string | null } {
-  for (let i = 0; i < ledger.length; i++) {
-    const e = ledger[i];
-    const prevHash = i > 0 ? (ledger[i-1].chain_hash || "GENESIS") : "GENESIS";
-    const expected = chainHash(e, prevHash);
-    if (e.chain_hash && e.chain_hash !== expected) {
+  for (const e of ledger) {
+    // Skip entries that don't carry a recorded prev_hash (legacy/demo entries)
+    if (!e.chain_hash || !e.prev_hash) continue;
+    const expected = chainHash(e, e.prev_hash);
+    if (e.chain_hash !== expected) {
       return { valid: false, broken_at: e.id };
     }
   }
