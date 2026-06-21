@@ -3,62 +3,29 @@
  * Fiducia Centrale — Ledger Read API (Stratum-06)
  *
  * GET /api/ledger
- *   Returns all ledger entries, newest-first.
- *   Optional query params:
- *     ?type=MINT_FDC           — filter by action token
- *     ?stratum=07-Hereditary   — filter by stratum
- *     ?limit=50                — max entries to return (default: 500)
- *     ?offset=0                — pagination offset
+ * Returns all ledger entries, newest-first.
+ * Optional query params:
+ * ?type=MINT_FDC           — filter by action token
+ * ?stratum=07-Hereditary   — filter by stratum
+ * ?limit=50                — max entries to return (default: 500)
+ * ?offset=0                — pagination offset
  *
  * GET /api/ledger?id=entry-xxx
- *   Returns a single entry by ID.
+ * Returns a single entry by ID.
  *
- * No auth required for reads — the ledger is publicly auditable by design.
- * This is intentional: a provenance ledger that requires auth to read
- * is not a provenance ledger.
+ * No auth required for reads — the ledger is publicly auditable by design. * This is intentional: a provenance ledger that requires auth to read
  */
 
 import { NextRequest, NextResponse } from "next/server";
-
-// ── Upstash REST helpers ──────────────────────────────────────────────────────
-// We use plain fetch() — no @upstash/redis package needed.
-// The REST API is: POST {UPSTASH_REDIS_REST_URL}  with Bearer token.
-
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL!;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!;
-const LEDGER_KEY = "fiducia:ledger:entries"; // Redis list key
-
-async function redisCommand<T = unknown>(
-  ...args: (string | number)[]
-): Promise<T> {
-  const res = await fetch(REDIS_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${REDIS_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(args),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Redis error ${res.status}: ${text}`);
-  }
-
-  const json = (await res.json()) as { result: T; error?: string };
-  if (json.error) throw new Error(`Redis error: ${json.error}`);
-  return json.result;
-}
-
-// ── GET handler ───────────────────────────────────────────────────────────────
+import { supabase } from "@/app/lib/supabase";
 
 export async function GET(req: NextRequest) {
-  // Verify env vars are present — give a clear error rather than a cryptic Redis fail
-  if (!REDIS_URL || !REDIS_TOKEN) {
+  // Check that Supabase variables are injected
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return NextResponse.json(
       {
         error:
-          "Server misconfiguration: UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN is not set. " +
+          "Server misconfiguration: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY is not set. " +
           "Add both to your Vercel environment variables and redeploy.",
       },
       { status: 500 }
@@ -73,52 +40,49 @@ export async function GET(req: NextRequest) {
   const offset = parseInt(searchParams.get("offset") ?? "0");
 
   try {
-    // LRANGE returns the list from index 0 to end.
-    // We store newest entries at the HEAD (LPUSH), so index 0 = newest.
-    const raw = await redisCommand<string[]>("LRANGE", LEDGER_KEY, 0, -1);
-
-    // Parse all entries
-    const all = raw
-      .map((item) => {
-        try {
-          return JSON.parse(item);
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
-
-    // Single-entry lookup
+    // ── CASE 1: Single-entry lookup by ID ──
     if (singleId) {
-      const entry = all.find((e) => e.id === singleId);
+      const { data: entry, error } = await supabase
+        .from("ledger_entries")
+        .select("*")
+        .eq("id", singleId)
+        .maybeSingle(); // Optimized single row database query
+
+      if (error) throw error;
       if (!entry) {
         return NextResponse.json({ error: "Entry not found" }, { status: 404 });
       }
-      return NextResponse.json(entry);
+      return NextResponse.json(entry, {
+        headers: { "Access-Control-Allow-Origin": "*" }
+      });
     }
 
-    // Filter
-    let filtered = all;
+    // ── CASE 2: List lookup with server-side filtering ──
+    // We start a native SQL query builder query on the database
+    let query = supabase
+      .from("ledger_entries")
+      .select("*", { count: "exact" }); // Grabs the total counts safely
+
+    // Server-side filtering rather than parsing arrays in application memory
     if (typeFilter) {
-      filtered = filtered.filter((e) => e.action?.token === typeFilter);
+      query = query.eq("type", typeFilter);
     }
     if (stratumFilter) {
-      filtered = filtered.filter(
-        (e) =>
-          e.action?.stratum === stratumFilter ||
-          e.authority?.stratum === stratumFilter
-      );
+      query = query.eq("stratum", stratumFilter);
     }
 
-    // Paginate
-    const page = filtered.slice(offset, offset + limit);
+    // Apply native database pagination and reverse-chronological ordering
+    const { data: entries, error, count } = await query
+      .order("timestamp", { ascending: false })
+      .range(offset, offset + limit - 1);
 
-    return NextResponse.json(page, {
+    if (error) throw error;
+
+    return NextResponse.json(entries, {
       headers: {
-        "X-Total-Count": String(filtered.length),
-        "X-Ledger-Size": String(all.length),
-        // Public auditable ledger — allow cross-origin reads
-        "Access-Control-Allow-Origin": "*",
+        "X-Total-Count": String(count ?? 0),
+        "X-Ledger-Size": String(count ?? 0),
+        "Access-Control-Allow-Origin": "*", // Publicly auditable
       },
     });
   } catch (err: unknown) {
