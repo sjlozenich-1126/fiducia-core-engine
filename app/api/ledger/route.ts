@@ -1,113 +1,162 @@
 /**
  * app/api/ledger/route.ts
- * Fiducia Centrale — Ledger Read API (Stratum-06)
+ * Fiducia Centrale — Ledger Read + Write API (Stratum-06)
+ * Backed by Supabase Postgres. Matches the nested schema used by app/page.tsx.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
-export async function GET(req: NextRequest) {
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-Fiducia-Token",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS });
+}
+
+function rowToEntry(row: any) {
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    asset: {
+      id: row.asset_id,
+      type: row.asset_type,
+      label: row.asset_label,
+    },
+    action: {
+      token: row.action_token,
+      stratum: row.action_stratum,
+      reason: row.action_reason,
+    },
+    parties: {
+      issuer: row.issuer,
+      from: row.party_from,
+      to: row.party_to,
+    },
+    instrument: {
+      type: row.instrument_type,
+      unit: row.instrument_unit,
+      amount: row.instrument_amount,
+    },
+    legal: {
+      jurisdiction: row.jurisdiction,
+      forum: row.forum,
+      upstream_refs: row.upstream_refs || [],
+      doc_hash: row.doc_hash,
+    },
+    authority: {
+      stratum: row.authority_stratum,
+      tier: row.authority_tier,
+      level: row.authority_level,
+    },
+    policy: {
+      gdr_index_delta: row.gdr_index_delta,
+    },
+    metadata: {
+      tags: row.tags || [],
+      notes: row.notes,
+      version: row.version,
+    },
+    chain_hash: row.chain_hash,
+    prev_hash: row.prev_hash,
+    _synced: true,
+    _local: false,
+  };
+}
+
+export async function GET() {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return NextResponse.json(
       { error: "Server misconfiguration: Supabase environment variables are missing." },
-      { status: 500 }
+      { status: 500, headers: CORS }
     );
   }
 
-  const { searchParams } = req.nextUrl;
-  const singleId = searchParams.get("id");
-  const typeFilter = searchParams.get("type");
-  const stratumFilter = searchParams.get("stratum");
-  const limit = Math.min(parseInt(searchParams.get("limit") ?? "500"), 1000);
-  const offset = parseInt(searchParams.get("offset") ?? "0");
-
   try {
-    // ── CASE 1: Single row lookup ──
-    if (singleId) {
-      const { data: entry, error } = await supabase
-        .from("ledger_entries")
-        .select("*")
-        .eq("id", singleId)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (!entry) {
-        return NextResponse.json({ error: "Entry not found" }, { status: 404 });
-      }
-
-      // Reconstruct the nested format the frontend expects
-      const formattedEntry = {
-        id: entry.id,
-        type: entry.type,
-        timestamp: entry.timestamp,
-        hash: entry.hash,
-        actor: {
-          id: entry.actor_id,
-          stratum: entry.stratum
-        },
-        payload: entry.payload,
-        constraints: entry.constraints,
-        references: entry.references_data
-      };
-
-      return NextResponse.json(formattedEntry, {
-        headers: { "Access-Control-Allow-Origin": "*" }
-      });
-    }
-
-    // ── CASE 2: High-performance list lookup ──
-    let query = supabase
+    const { data, error } = await supabase
       .from("ledger_entries")
-      .select("*", { count: "exact" });
-
-    if (typeFilter) {
-      query = query.eq("type", typeFilter);
-    }
-    if (stratumFilter) {
-      query = query.eq("stratum", stratumFilter);
-    }
-
-    const { data: entries, error, count } = await query
+      .select("*")
       .order("timestamp", { ascending: false })
-      .range(offset, offset + limit - 1);
+      .limit(1000);
 
     if (error) throw error;
 
-    // Map the database rows back to the nested JSON structure expected by the UI
-    const formattedEntries = (entries || []).map((entry: any) => ({
-      id: entry.id,
-      type: entry.type,
-      timestamp: entry.timestamp,
-      hash: entry.hash,
-      actor: {
-        id: entry.actor_id,
-        stratum: entry.stratum
-      },
-      payload: entry.payload,
-      constraints: entry.constraints,
-      references: entry.references_data
-    }));
-
-    return NextResponse.json(formattedEntries, {
-      headers: {
-        "X-Total-Count": String(count ?? 0),
-        "X-Ledger-Size": String(count ?? 0),
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
+    const entries = (data || []).map(rowToEntry);
+    return NextResponse.json(entries, { headers: CORS });
   } catch (err: any) {
-    console.error("[ledger/GET] Error:", err.message);
-    return NextResponse.json({ error: err.message || "Failed to query ledger state" }, { status: 500 });
+    return NextResponse.json(
+      { error: err.message || "Failed to query ledger state" },
+      { status: 500, headers: CORS }
+    );
   }
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
-  });
+export async function POST(req: NextRequest) {
+  const token = req.headers.get("x-fiducia-token");
+  if (token !== process.env.FIDUCIA_SYS_TOKEN) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: CORS });
+  }
+
+  try {
+    const body = await req.json();
+
+    const row = {
+      id: body.id,
+      timestamp: body.timestamp || new Date().toISOString(),
+
+      asset_id: body.asset?.id ?? null,
+      asset_type: body.asset?.type ?? null,
+      asset_label: body.asset?.label ?? null,
+
+      action_token: body.action?.token,
+      action_stratum: body.action?.stratum ?? null,
+      action_reason: body.action?.reason ?? null,
+
+      issuer: body.parties?.issuer ?? null,
+      party_from: body.parties?.from ?? null,
+      party_to: body.parties?.to ?? null,
+
+      instrument_type: body.instrument?.type ?? null,
+      instrument_unit: body.instrument?.unit ?? null,
+      instrument_amount: body.instrument?.amount ?? null,
+
+      jurisdiction: body.legal?.jurisdiction ?? null,
+      forum: body.legal?.forum ?? null,
+      upstream_refs: body.legal?.upstream_refs ?? [],
+      doc_hash: body.legal?.doc_hash ?? null,
+
+      authority_stratum: body.authority?.stratum ?? null,
+      authority_tier: body.authority?.tier ?? null,
+      authority_level: body.authority?.level ?? null,
+
+      gdr_index_delta: body.policy?.gdr_index_delta ?? null,
+
+      tags: body.metadata?.tags ?? [],
+      notes: body.metadata?.notes ?? null,
+      version: body.metadata?.version ?? "1.0",
+
+      chain_hash: body.chain_hash ?? null,
+      prev_hash: body.prev_hash ?? null,
+    };
+
+    const { data, error } = await supabase
+      .from("ledger_entries")
+      .insert([row])
+      .select();
+
+    if (error) throw error;
+
+    return NextResponse.json(
+      { ok: true, id: body.id, entry: rowToEntry(data[0]) },
+      { headers: CORS }
+    );
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err.message || "Failed to write entry" },
+      { status: 500, headers: CORS }
+    );
+  }
 }
