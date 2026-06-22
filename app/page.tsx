@@ -34,6 +34,20 @@ interface LedgerEntry {
   chain_hash?: string; prev_hash?: string; _local?: boolean; _synced?: boolean;
 }
 
+interface MintProps {
+  mintForm: any;
+  handleMintChange: (k: string, v: string|number) => void;
+  handleMint: (e: React.FormEvent) => Promise<void>;
+  connectToken: string;
+  mintStatus: {ok:boolean;msg:string;id?:string}|null;
+  authorityCheck: {valid:boolean;reason:string}|null;
+  loading: boolean;
+  ACTION_TOKENS: Record<string,{label:string;stratum:string;tier:number;level:number}>;
+  STRATA: any[];
+  INSTRUMENTS: string[];
+  JURISDICTIONS: string[];
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const STRATA = [
   { code:"01-Inherent",       name:"Inherent Identity",     short:"S01", color:"#5a7a5a", desc:"DNA, lineage, biological identity" },
@@ -568,108 +582,212 @@ export default function App() {
   }
 
   // ─── Register / Mint Tab ─────────────────────────────────────────────────────
-  function Mint() {
-    return (
-      <div>
-        <div className="page-header"><div><h2>Register Entry</h2><p>Stratum 07 — Mint a new immutable block to the provenance ledger</p></div></div>
-        {!connectToken && (
-          <div className="alert alert-amber" style={{marginBottom:14}}>
-            No FIDUCIA_SYS_TOKEN set — go to the Connect tab and enter your token first, or entries will only save to this browser.
-          </div>
-        )}
-        {mintStatus && (
-          <div className={`alert ${mintStatus.ok?"alert-green":"alert-red"}`} style={{marginBottom:14}}>
-            {loading && <div className="spinner"/>}
-            {mintStatus.msg}
-          </div>
-        )}
-        {authorityCheck && (
-          <div className={authorityCheck.valid?"auth-enforce-pass":"auth-enforce-fail"} style={{marginBottom:14}}>
-            <strong>{authorityCheck.valid?"✓ Authority Pre-Check Passed":"⚠ Authority Pre-Check Failed"}</strong> — {authorityCheck.reason}
-          </div>
-        )}
-        <div className="grid2">
-          <div className="card">
-            <div className="section-title">Entry Details</div>
-            <form onSubmit={handleMint}>
-              <div className="form-row">
-                <div className="fld">
-                  <label>Action Token</label>
-                  <select value={mintForm.action_token} onChange={e=>handleMintChange("action_token",e.target.value)}>
-                    {Object.entries(ACTION_TOKENS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
-                  </select>
-                </div>
-                <div className="fld">
-                  <label>Stratum</label>
-                  <select value={mintForm.stratum} onChange={e=>handleMintChange("stratum",e.target.value)}>
-                    {STRATA.map(s=><option key={s.code} value={s.code}>{s.short} — {s.name}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="form-row single"><div className="fld"><label>Asset / Subject Label</label><input value={mintForm.asset_label} onChange={e=>handleMintChange("asset_label",e.target.value)} placeholder="e.g. Certificate of Provenance — Document 001" required/></div></div>
-              <div className="form-row">
-                <div className="fld"><label>Asset Type</label><select value={mintForm.asset_type} onChange={e=>handleMintChange("asset_type",e.target.value)}>{INSTRUMENTS.map(i=><option key={i} value={i}>{i}</option>)}</select></div>
-                <div className="fld"><label>Jurisdiction</label><select value={mintForm.jurisdiction} onChange={e=>handleMintChange("jurisdiction",e.target.value)}>{JURISDICTIONS.map(j=><option key={j} value={j}>{j}</option>)}</select></div>
-              </div>
-              <div className="form-row">
-                <div className="fld"><label>Issuer</label><input value={mintForm.issuer} onChange={e=>handleMintChange("issuer",e.target.value)} placeholder="Fiducia Centrale"/></div>
-                <div className="fld"><label>To / Recipient</label><input value={mintForm.to} onChange={e=>handleMintChange("to",e.target.value)} placeholder="e.g. Shane Jonathan Lozenich"/></div>
-              </div>
-              {["MINT_FDC","TRANSFER_FDC","REDEEM_FDC","MINT_OBLIGATION"].includes(mintForm.action_token) && (
-                <div className="form-row">
-                  <div className="fld"><label>Unit</label><input value={mintForm.instrument_unit} onChange={e=>handleMintChange("instrument_unit",e.target.value)} placeholder="FDC"/></div>
-                  <div className="fld"><label>Amount</label><input type="number" value={mintForm.instrument_amount} onChange={e=>handleMintChange("instrument_amount",e.target.value)} placeholder="0"/></div>
-                </div>
-              )}
-              <div className="form-row single"><div className="fld"><label>Reason / Purpose</label><input value={mintForm.reason} onChange={e=>handleMintChange("reason",e.target.value)} placeholder="Why is this action being taken?" required/></div></div>
-              <div className="form-row single"><div className="fld"><label>Upstream References (comma-separated Entry IDs)</label><input value={mintForm.upstream_refs} onChange={e=>handleMintChange("upstream_refs",e.target.value)} placeholder="STRATUM02-AUTH-V1, STRATUM01-IDENTITY-SJL"/></div></div>
-              <div className="form-row single"><div className="fld"><label>Notes</label><textarea value={mintForm.notes} onChange={e=>handleMintChange("notes",e.target.value)} rows={2} style={{resize:"vertical"}}/></div></div>
-              <div className="form-row single"><div className="fld"><label>Tags (comma separated)</label><input value={mintForm.tags} onChange={e=>handleMintChange("tags",e.target.value)} placeholder="identity, legal, stratum01"/></div></div>
-              <div className="sep"/>
-              <div className="form-row three">
-                <div className="fld"><label>Stratum (auto)</label><input value={mintForm.stratum} readOnly style={{opacity:0.6}}/></div>
-                <div className="fld"><label>Financial Tier (1–8)</label><input type="number" min={1} max={8} value={mintForm.tier} onChange={e=>handleMintChange("tier",e.target.value)}/></div>
-                <div className="fld"><label>Security Level (1–8)</label><input type="number" min={1} max={8} value={mintForm.level} onChange={e=>handleMintChange("level",e.target.value)}/></div>
-              </div>
-              <button className="btn btn-primary" type="submit" disabled={loading || !authorityCheck?.valid} style={{width:"100%",marginTop:8}}>
-                {loading?"Registering…":!authorityCheck?.valid?"Authority Check Failed — Cannot Register":"Register Entry to Ledger"}
-              </button>
-            </form>
-          </div>
-          <div>
-            <div className="card" style={{marginBottom:14}}>
-              <div className="section-title">Authority Reference</div>
-              {STRATA.map(s=>(
-                <div key={s.code} style={{display:"flex",gap:8,padding:"7px 0",borderBottom:"1px solid #e0d8cc",alignItems:"flex-start"}}>
-                  <div style={{width:30,height:18,border:`1px solid ${s.color}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:s.color,flexShrink:0}}>{s.short}</div>
-                  <div><div style={{fontSize:12,color:"#2a2218"}}>{s.name}</div><div style={{fontSize:10,color:"#7a6a55"}}>{s.desc}</div></div>
-                </div>
-              ))}
-            </div>
-            <div className="card">
-              <div className="section-title">Institutional Processes</div>
-              {[
-                {name:"Issue Credit",steps:["REQUEST_CREDIT","ASSESS_RISK","APPROVE_CREDIT","MINT_OBLIGATION","ACCEPT_OBLIGATION"]},
-                {name:"Register Document",steps:["REGISTER_DOC","ATTEST_DOC"]},
-                {name:"Legal Proceeding",steps:["INITIATE_LEGAL","ESCALATE_PROCEDURAL"]},
-              ].map(p=>(
-                <div key={p.name} style={{marginBottom:14}}>
-                  <div style={{fontSize:11,fontWeight:600,color:"#2a2218",marginBottom:6}}>{p.name}</div>
-                  {p.steps.map((s,i)=>(
-                    <div key={s} className="process-step">
-                      <div className="process-num">{i+1}</div>
-                      <div><div style={{fontSize:11,color:"#2a2218"}}>{ACTION_TOKENS[s]?.label||s}</div><div style={{fontSize:9,color:"#9a8a75"}}>{s}</div></div>
-                    </div>
+ function Mint({
+  mintForm,
+  handleMintChange,
+  handleMint,
+  connectToken,
+  mintStatus,
+  authorityCheck,
+  loading,
+  ACTION_TOKENS,
+  STRATA,
+  INSTRUMENTS,
+  JURISDICTIONS
+}: MintProps) {
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h2>Register Entry</h2>
+          <p>Stratum 07 — Mint a new immutable block to the provenance ledger</p>
+        </div>
+      </div>
+      
+      {!connectToken && (
+        <div className="alert alert-amber" style={{ marginBottom: 14 }}>
+          No FIDUCIA_SYS_TOKEN set — go to the Connect tab and enter your token first, or entries will only save to this browser.
+        </div>
+      )}
+      
+      {mintStatus && (
+        <div className={`alert ${mintStatus.ok ? "alert-green" : "alert-red"}`} style={{ marginBottom: 14 }}>
+          {loading && <div className="spinner" />}
+          {mintStatus.msg}
+        </div>
+      )}
+      
+      {authorityCheck && (
+        <div className={authorityCheck.valid ? "auth-enforce-pass" : "auth-enforce-fail"} style={{ marginBottom: 14 }}>
+          <strong>{authorityCheck.valid ? "✓ Authority Pre-Check Passed" : "⚠ Authority Pre-Check Failed"}</strong> — {authorityCheck.reason}
+        </div>
+      )}
+      
+      <div className="grid2">
+        <div className="card">
+          <div className="section-title">Entry Details</div>
+          <form onSubmit={handleMint}>
+            <div className="form-row">
+              <div className="fld">
+                <label>Action Token</label>
+                <select value={mintForm.action_token} onChange={e => handleMintChange("action_token", e.target.value)}>
+                  {Object.entries(ACTION_TOKENS).map(([k, v]: [string, any]) => (
+                    <option key={k} value={k}>{v.label}</option>
                   ))}
-                </div>
-              ))}
+                </select>
+              </div>
+              <div className="fld">
+                <label>Stratum</label>
+                <select value={mintForm.stratum} onChange={e => handleMintChange("stratum", e.target.value)}>
+                  {STRATA.map((s: any) => (
+                    <option key={s.code} value={s.code}>{s.short} — {s.name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
+            
+            <div className="form-row single">
+              <div className="fld">
+                <label>Asset / Subject Label</label>
+                <input 
+                  value={mintForm.asset_label} 
+                  onChange={e => handleMintChange("asset_label", e.target.value)} 
+                  placeholder="e.g. Certificate of Provenance — Document 001" 
+                  required
+                />
+              </div>
+            </div>
+            
+            <div className="form-row">
+              <div className="fld">
+                <label>Asset Type</label>
+                <select value={mintForm.asset_type} onChange={e => handleMintChange("asset_type", e.target.value)}>
+                  {INSTRUMENTS.map((i: string) => <option key={i} value={i}>{i}</option>)}
+                </select>
+              </div>
+              <div className="fld">
+                <label>Jurisdiction</label>
+                <select value={mintForm.jurisdiction} onChange={e => handleMintChange("jurisdiction", e.target.value)}>
+                  {JURISDICTIONS.map((j: string) => <option key={j} value={j}>{j}</option>)}
+                </select>
+              </div>
+            </div>
+            
+            <div className="form-row">
+              <div className="fld">
+                <label>Issuer</label>
+                <input value={mintForm.issuer} onChange={e => handleMintChange("issuer", e.target.value)} placeholder="Fiducia Centrale" />
+              </div>
+              <div className="fld">
+                <label>To / Recipient</label>
+                <input value={mintForm.to} onChange={e => handleMintChange("to", e.target.value)} placeholder="e.g. Shane Jonathan Lozenich" />
+              </div>
+            </div>
+            
+            {["MINT_FDC", "TRANSFER_FDC", "REDEEM_FDC", "MINT_OBLIGATION"].includes(mintForm.action_token) && (
+              <div className="form-row">
+                <div className="fld">
+                  <label>Unit</label>
+                  <input value={mintForm.instrument_unit} onChange={e => handleMintChange("instrument_unit", e.target.value)} placeholder="FDC" />
+                </div>
+                <div className="fld">
+                  <label>Amount</label>
+                  <input type="number" value={mintForm.instrument_amount} onChange={e => handleMintChange("instrument_amount", e.target.value)} placeholder="0" />
+                </div>
+              </div>
+            )}
+            
+            <div className="form-row single">
+              <div className="fld">
+                <label>Reason / Purpose</label>
+                <input value={mintForm.reason} onChange={e => handleMintChange("reason", e.target.value)} placeholder="Why is this action being taken?" required />
+              </div>
+            </div>
+            
+            <div className="form-row single">
+              <div className="fld">
+                <label>Upstream References (comma-separated Entry IDs)</label>
+                <input value={mintForm.upstream_refs} onChange={e => handleMintChange("upstream_refs", e.target.value)} placeholder="STRATUM02-AUTH-V1, STRATUM01-IDENTITY-SJL" />
+              </div>
+            </div>
+            
+            <div className="form-row single">
+              <div className="fld">
+                <label>Notes</label>
+                <textarea value={mintForm.notes} onChange={e => handleMintChange("notes", e.target.value)} rows={2} style={{ resize: "vertical" }} />
+              </div>
+            </div>
+            
+            <div className="form-row single">
+              <div className="fld">
+                <label>Tags (comma separated)</label>
+                <input value={mintForm.tags} onChange={e => handleMintChange("tags", e.target.value)} placeholder="identity, legal, stratum01" />
+              </div>
+            </div>
+            
+            <div className="sep" />
+            
+            <div className="form-row three">
+              <div className="fld">
+                <label>Stratum (auto)</label>
+                <input value={mintForm.stratum} readOnly style={{ opacity: 0.6 }} />
+              </div>
+              <div className="fld">
+                <label>Financial Tier (1–8)</label>
+                <input type="number" min={1} max={8} value={mintForm.tier} onChange={e => handleMintChange("tier", e.target.value)} />
+              </div>
+              <div className="fld">
+                <label>Security Level (1–8)</label>
+                <input type="number" min={1} max={8} value={mintForm.level} onChange={e => handleMintChange("level", e.target.value)} />
+              </div>
+            </div>
+            
+            <button className="btn btn-primary" type="submit" disabled={loading || !authorityCheck?.valid} style={{ width: "100%", marginTop: 8 }}>
+              {loading ? "Registering…" : !authorityCheck?.valid ? "Authority Check Failed — Cannot Register" : "Register Entry to Ledger"}
+            </button>
+          </form>
+        </div>
+        
+        <div>
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div className="section-title">Authority Reference</div>
+            {STRATA.map((s: any) => (
+              <div key={s.code} style={{ display: "flex", gap: 8, padding: "7px 0", borderBottom: "1px solid #e0d8cc", alignItems: "flex-start" }}>
+                <div style={{ width: 30, height: 18, border: `1px solid ${s.color}`, display: "flex", alignItems: "center", justifyContent:"center", fontSize: 8, color: s.color, flexShrink: 0 }}>{s.short}</div>
+                <div>
+                  <div style={{ fontSize: 12, color: "#2a2218" }}>{s.name}</div>
+                  <div style={{ fontSize: 10, color: "#7a6a55" }}>{s.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="card">
+            <div className="section-title">Institutional Processes</div>
+            {[
+              { name: "Issue Credit", steps: ["REQUEST_CREDIT", "ASSESS_RISK", "APPROVE_CREDIT", "MINT_OBLIGATION", "ACCEPT_OBLIGATION"] },
+              { name: "Register Document", steps: ["REGISTER_DOC", "ATTEST_DOC"] },
+              { name: "Legal Proceeding", steps: ["INITIATE_LEGAL", "ESCALATE_PROCEDURAL"] },
+            ].map(p => (
+              <div key={p.name} style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#2a2218", marginBottom: 6 }}>{p.name}</div>
+                {p.steps.map((s, i) => (
+                  <div key={s} className="process-step">
+                    <div className="process-num">{i + 1}</div>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#2a2218" }}>{ACTION_TOKENS[s]?.label || s}</div>
+                      <div style={{ fontSize: 9, color: "#9a8a75" }}>{s}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
         </div>
       </div>
-    );
-  }
-
+    </div>
+  );
+}
   // ─── Certificates Tab ────────────────────────────────────────────────────────
   function Certificates() {
     const entry = certEntry || ledger[0];
@@ -970,7 +1088,7 @@ export default function App() {
         <div className="content">
           {tab==="overview"    && <Overview/>}
           {tab==="ledger"      && <LedgerView/>}
-          {tab==="mint"        && <Mint/>}
+          {tab==="mint"        && <Mint mintForm={mintForm} handleMintChange={handleMintChange} handleMint={handleMint} connectToken={connectToken} mintStatus={mintStatus} authorityCheck={authorityCheck} loading={loading} ACTION_TOKENS={ACTION_TOKENS} STRATA={STRATA} INSTRUMENTS={INSTRUMENTS} JURISDICTIONS={JURISDICTIONS}/>}
           {tab==="certificates"&& <Certificates/>}
           {tab==="authority"   && <AuthorityEngine/>}
           {tab==="connect"     && <Connect/>}
