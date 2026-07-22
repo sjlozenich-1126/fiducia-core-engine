@@ -1145,7 +1145,7 @@ const NEW_DEPS = {
   "bs58": "^5.0.0",
   "pdf-lib": "^1.17.1",
   "jszip": "^3.10.1",
-  "javascript-opentimestamps": "^0.5.4",
+  "javascript-opentimestamps": "^0.4.5",
   "@web3-storage/w3up-client": "^17.1.2",
   "@ardrive/turbo-sdk": "^1.20.0",
 };
